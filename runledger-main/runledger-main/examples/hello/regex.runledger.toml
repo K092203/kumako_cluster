@@ -1,0 +1,7 @@
+# Measure a program that does not emit a #TUNE line.
+[measure]
+kind = "regex"
+stream = "stdout"
+elapsed = 'time:\s*([0-9.]+)'
+score = 'best=([0-9.]+)'
+correct = 'OK'

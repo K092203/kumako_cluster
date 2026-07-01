@@ -1,0 +1,5 @@
+warning: approaching memory limit
+ERROR: deadline reached before completion
+line 40: scheduler killed worker
+line 41: cleanup started
+line 42: job terminated due to timeout

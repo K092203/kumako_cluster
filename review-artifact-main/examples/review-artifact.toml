@@ -1,0 +1,20 @@
+# review-artifact default configuration
+language = "ja"
+
+[backend]
+name = "llm"
+command = "llm"
+
+[outputs]
+dir = ".review"
+formats = ["markdown", "json"]
+
+[targets.results_latest]
+kind = "directory"
+path = "results/latest"
+prompt = "experiment_analysis"
+include = ["meta.json", "build.log", "stdout.txt", "stderr.txt", "resource.txt", "status.txt"]
+
+[targets.diff]
+prompt = "code_review"
+collect = ["git status --short", "git diff --stat", "git diff"]

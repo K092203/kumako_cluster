@@ -1,0 +1,17 @@
+# runledger outputs
+runs/
+sweeps/
+state/
+*.tmp.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# editors / OS
+.DS_Store

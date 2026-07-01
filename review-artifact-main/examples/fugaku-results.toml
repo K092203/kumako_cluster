@@ -1,0 +1,15 @@
+# Fugaku / HPC job results example
+language = "ja"
+
+[backend]
+name = "llm"
+command = "llm -m gpt-4o"
+
+[outputs]
+dir = ".review"
+
+[targets.fugaku_latest]
+kind = "directory"
+path = "results/latest"
+prompt = "experiment_analysis"
+include = ["meta.json", "build.log", "stdout.txt", "stderr.txt", "resource.txt", "status.txt"]

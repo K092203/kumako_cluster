@@ -1,0 +1,12 @@
+jobs/running/
+jobs/done/
+jobs/failed/
+results/
+status/
+logs/
+reviews/
+state/incumbent.json
+worker_local/
+*.tmp
+__pycache__/
+*.pyc

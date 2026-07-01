@@ -1,0 +1,3 @@
+Running benchmark with N=1024
+iteration 1: 1.23s
+iteration 2: 1.21s

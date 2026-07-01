@@ -1,0 +1,3 @@
+peak_memory_mb=7800
+cpu_hours=0.42
+io_read_mb=120

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Create pending jobs for the shared-folder cluster."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def default_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def atomic_write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def existing_job_ids(root: Path) -> set[str]:
+    ids: set[str] = set()
+    for bucket in ["pending", "running", "done", "failed"]:
+        for path in (root / "jobs" / bucket).glob("*.json"):
+            ids.add(path.stem.split("--", 1)[0])
+    for path in (root / "results").glob("*/*/result.json"):
+        ids.add(path.parent.name)
+    return ids
+
+
+def find_start(prefix: str, count: int, used: set[str]) -> int:
+    number = 1
+    while True:
+        if all(f"{prefix}{number + offset:03d}" not in used for offset in range(count)):
+            return number
+        number += 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Create SuperCon cluster job JSON files.")
+    parser.add_argument("--root", type=Path, default=default_root(), help="shared cluster root")
+    parser.add_argument("--count", type=int, default=1, help="number of jobs to create")
+    parser.add_argument("--prefix", default="job", help="job id prefix")
+    parser.add_argument("--start", type=int, default=None, help="first job number and seed")
+    parser.add_argument("--solver", default="dummy", help="solver label")
+    parser.add_argument("--case", default="case001", help="case label")
+    parser.add_argument("--timeout-sec", type=float, default=30.0, help="job timeout")
+    parser.add_argument("--dummy-elapsed", type=float, default=0.01, help="elapsed value for dummy jobs")
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="optional command after --")
+    args = parser.parse_args()
+
+    command = args.command
+    if command and command[0] == "--":
+        command = command[1:]
+    command_value: list[str] | str = command if command else "dummy"
+
+    pending = args.root / "jobs" / "pending"
+    pending.mkdir(parents=True, exist_ok=True)
+    used = existing_job_ids(args.root)
+    start = args.start if args.start is not None else find_start(args.prefix, args.count, used)
+
+    created: list[str] = []
+    for offset in range(args.count):
+        number = start + offset
+        job_id = f"{args.prefix}{number:03d}"
+        if job_id in used:
+            raise SystemExit(f"job already exists outside pending too: {job_id}")
+        path = pending / f"{job_id}.json"
+        if path.exists():
+            raise SystemExit(f"job already exists: {path}")
+        job = {
+            "job_id": job_id,
+            "solver": args.solver,
+            "case": args.case,
+            "seed": number,
+            "elapsed": args.dummy_elapsed,
+            "timeout_sec": args.timeout_sec,
+            "command": command_value,
+            "created_at": now_iso(),
+        }
+        atomic_write_json(path, job)
+        created.append(job_id)
+
+    print(f"created {len(created)} job(s): " + ", ".join(created))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
