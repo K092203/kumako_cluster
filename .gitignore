@@ -12,3 +12,4 @@ __pycache__/
 *.pyc
 workers/
 jobs/pending/
+repo_snapshot/
