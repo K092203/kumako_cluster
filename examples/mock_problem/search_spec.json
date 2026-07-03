@@ -1,0 +1,12 @@
+{
+  "name": "mock-placement",
+  "params": {
+    "iters": {"type": "int", "low": 200, "high": 20000, "log": true},
+    "t0": {"type": "float", "low": 0.1, "high": 50.0, "log": true},
+    "cooling": {"type": "float", "low": 0.0001, "high": 0.5, "log": true}
+  },
+  "command": ["python", "solver.py", "--seed", "__seed__", "--iters", "__iters__", "--t0", "__t0__", "--cooling", "__cooling__", "--out", "out/solution.txt"],
+  "instances": [1, 2, 3, 4, 5],
+  "timeout_sec": 60,
+  "artifacts": ["out/solution.txt"]
+}
