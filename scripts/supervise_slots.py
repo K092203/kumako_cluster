@@ -53,9 +53,9 @@ def should_stop(root: Path, base_worker_id: str) -> bool:
     )
 
 
-def launch_worker(root: Path, base_worker_id: str, slot_number: int) -> subprocess.Popen:
+def launch_worker(root: Path, base_worker_id: str, slot_number: int, local_base: Path) -> subprocess.Popen:
     slot_id = f"{base_worker_id}-s{slot_number:02d}"
-    local_dir = Path(r"C:\supercon-worker") / slot_id
+    local_dir = local_base / slot_id
     local_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable,
@@ -114,7 +114,7 @@ def main() -> int:
                 if proc is None or proc.poll() is not None:
                     if proc is not None:
                         time.sleep(args.restart_delay_sec)
-                    procs[slot] = launch_worker(root, base_worker_id, slot)
+                    procs[slot] = launch_worker(root, base_worker_id, slot, args.local_base)
                     restarted += 1
                 else:
                     alive += 1
