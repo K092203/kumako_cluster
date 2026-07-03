@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableDelayedExpansion
 set "SLOTS=%~1"
 if "%SLOTS%"=="" set "SLOTS=8"
@@ -13,6 +14,6 @@ echo Starting %SLOTS% slots for %BASE_WORKER_ID%
 for /l %%S in (1,1,%SLOTS%) do (
   set "NUM=0%%S"
   set "SLOT_ID=%BASE_WORKER_ID%-s!NUM:~-2!"
-  start "%BASE_WORKER_ID% slot %%S" cmd /k python scripts\worker.py --worker-id "!SLOT_ID!" --local-dir "C:\supercon-worker\!SLOT_ID!"
+  start "%BASE_WORKER_ID% slot %%S" cmd /c python scripts\worker.py --worker-id "!SLOT_ID!" --local-dir "C:\supercon-worker\!SLOT_ID!"
 )
 popd
