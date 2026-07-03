@@ -10,3 +10,5 @@ worker_local/
 *.tmp
 __pycache__/
 *.pyc
+workers/
+jobs/pending/
