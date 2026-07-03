@@ -294,7 +294,9 @@ def collect_artifacts(cwd: Path, globs: list[str], result_dir: Path) -> dict:
 
 
 def render_template(value: str, job: dict) -> str:
-    values = {str(k): str(v) for k, v in job.items()}
+    values = {str(k): str(v) for k, v in job.items() if not isinstance(v, (dict, list))}
+    if isinstance(job.get("params"), dict):
+        values.update({str(k): str(v) for k, v in job["params"].items()})
     for key, replacement in values.items():
         value = value.replace(f"__{key}__", replacement)
     return value
@@ -421,6 +423,8 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
         {
             "job_id": job_id,
             "worker": worker_id,
+            "sweep_id": job.get("sweep_id"),
+            "params": job.get("params"),
             "outcome": outcome,
             "exit_code": exit_code,
             "wall_elapsed": round(wall_elapsed, 6),
