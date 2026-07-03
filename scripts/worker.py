@@ -241,6 +241,58 @@ def run_dummy(job: dict) -> tuple[str, str, int, bool]:
     return stdout, stderr, 0, False
 
 
+def job_cwd(job: dict, repo_dir: Path) -> Path:
+    if job.get("cwd"):
+        return (repo_dir / str(job["cwd"])).resolve()
+    return repo_dir
+
+
+def artifact_globs(job: dict) -> list[str]:
+    artifacts = job.get("artifacts")
+    if isinstance(artifacts, str):
+        artifacts = [artifacts]
+    if not isinstance(artifacts, list):
+        return []
+    globs = []
+    for pattern in artifacts:
+        pattern = str(pattern)
+        if os.path.isabs(pattern) or ".." in Path(pattern).parts:
+            continue
+        globs.append(pattern)
+    return globs
+
+
+def clear_artifacts(cwd: Path, globs: list[str]) -> None:
+    for pattern in globs:
+        try:
+            matches = list(cwd.glob(pattern))
+        except (ValueError, NotImplementedError):
+            continue
+        for path in matches:
+            if path.is_file():
+                path.unlink(missing_ok=True)
+
+
+def collect_artifacts(cwd: Path, globs: list[str], result_dir: Path) -> dict:
+    collected: list[str] = []
+    missing: list[str] = []
+    for pattern in globs:
+        try:
+            matches = [p for p in cwd.glob(pattern) if p.is_file()]
+        except (ValueError, NotImplementedError):
+            matches = []
+        if not matches:
+            missing.append(pattern)
+            continue
+        for path in matches:
+            rel = path.relative_to(cwd)
+            dest = result_dir / "artifacts" / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+            collected.append(rel.as_posix())
+    return {"collected": sorted(collected), "missing": missing}
+
+
 def render_template(value: str, job: dict) -> str:
     values = {str(k): str(v) for k, v in job.items()}
     for key, replacement in values.items():
@@ -268,9 +320,7 @@ def run_command(
     if not command or command == "dummy":
         return run_dummy(job)
 
-    cwd = repo_dir
-    if job.get("cwd"):
-        cwd = (repo_dir / str(job["cwd"])).resolve()
+    cwd = job_cwd(job, repo_dir)
 
     if env is None:
         env = os.environ.copy()
@@ -332,6 +382,8 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
     exit_code: int | None = None
     timed_out = False
     error = ""
+    globs = artifact_globs(job)
+    artifacts = {"collected": [], "missing": list(globs)}
 
     try:
         repo_dir = copy_repo_snapshot(root, local_dir, worker_id)
@@ -339,7 +391,10 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
         heartbeat = lambda: update_status(root, worker_id, "running", job_id)
         job_env = job.get("env") if isinstance(job.get("env"), dict) else None
         env = command_env(root, worker_id, job_id, job_env)
+        cwd = job_cwd(job, repo_dir)
+        clear_artifacts(cwd, globs)
         stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, env=env, heartbeat=heartbeat)
+        artifacts = collect_artifacts(cwd, globs, result_dir)
     except Exception as exc:
         error = str(exc)
         stderr += f"\nWORKER_ERROR: {error}\n"
@@ -370,6 +425,7 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
             "exit_code": exit_code,
             "wall_elapsed": round(wall_elapsed, 6),
             "measure": measure,
+            "artifacts": artifacts,
             "error": error,
             "finished_at": now_iso(),
         },

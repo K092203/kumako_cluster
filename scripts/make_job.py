@@ -53,6 +53,12 @@ def main() -> int:
     parser.add_argument("--case", default="case001", help="case label")
     parser.add_argument("--timeout-sec", type=float, default=30.0, help="job timeout")
     parser.add_argument("--dummy-elapsed", type=float, default=0.01, help="elapsed value for dummy jobs")
+    parser.add_argument(
+        "--artifact",
+        action="append",
+        default=[],
+        help="output file glob (relative to job cwd) to collect into results/, repeatable",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER, help="optional command after --")
     args = parser.parse_args()
 
@@ -85,6 +91,8 @@ def main() -> int:
             "command": command_value,
             "created_at": now_iso(),
         }
+        if args.artifact:
+            job["artifacts"] = list(args.artifact)
         atomic_write_json(path, job)
         created.append(job_id)
 
