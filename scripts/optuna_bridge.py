@@ -69,15 +69,22 @@ def load_spec(path: Path) -> dict:
 # builtin fallback engine (stdlib only)
 
 
+def clamp_numeric(value: float, p: dict) -> object:
+    value = min(max(value, p["low"]), p["high"])
+    if p["type"] == "int":
+        return int(min(max(round(value), int(p["low"])), int(p["high"])))
+    return value
+
+
 def sample_random(params_spec: dict, rng: random.Random) -> dict:
     params: dict[str, object] = {}
     for name, p in params_spec.items():
         if p["type"] == "cat":
             params[name] = rng.choice(p["choices"])
+        elif p.get("log"):
+            params[name] = clamp_numeric(math.exp(rng.uniform(math.log(p["low"]), math.log(p["high"]))), p)
         elif p["type"] == "int":
             params[name] = rng.randint(int(p["low"]), int(p["high"]))
-        elif p.get("log"):
-            params[name] = math.exp(rng.uniform(math.log(p["low"]), math.log(p["high"])))
         else:
             params[name] = rng.uniform(p["low"], p["high"])
     return params
@@ -93,13 +100,10 @@ def perturb(params_spec: dict, base: dict, rng: random.Random) -> dict:
         if p["type"] == "cat":
             params[name] = value if rng.random() < 0.7 else rng.choice(p["choices"])
         elif p.get("log"):
-            candidate = float(value) * math.exp(rng.gauss(0.0, 0.3))
-            params[name] = min(max(candidate, p["low"]), p["high"])
+            params[name] = clamp_numeric(float(value) * math.exp(rng.gauss(0.0, 0.3)), p)
         else:
             sigma = 0.15 * (p["high"] - p["low"])
-            candidate = float(value) + rng.gauss(0.0, sigma)
-            candidate = min(max(candidate, p["low"]), p["high"])
-            params[name] = int(round(candidate)) if p["type"] == "int" else candidate
+            params[name] = clamp_numeric(float(value) + rng.gauss(0.0, sigma), p)
     return params
 
 

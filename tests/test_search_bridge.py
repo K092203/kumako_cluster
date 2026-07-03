@@ -20,6 +20,7 @@ SPEC = {
     "params": {
         "alpha": {"type": "float", "low": 0.0, "high": 1.0},
         "iters": {"type": "int", "low": 1, "high": 100},
+        "batch": {"type": "int", "low": 10, "high": 10000, "log": True},
         "strategy": {"type": "cat", "choices": ["a", "b"]},
     },
     "command": ["solver", "--alpha", "__alpha__", "--seed", "__seed__"],
@@ -60,10 +61,13 @@ def test_sample_and_perturb_respect_bounds() -> None:
         assert 0.0 <= params["alpha"] <= 1.0
         assert 1 <= params["iters"] <= 100
         assert params["strategy"] in ("a", "b")
+        # logスケールのintもint型で境界内であること(E2Eで発覚したバグの回帰テスト)
+        assert isinstance(params["batch"], int) and 10 <= params["batch"] <= 10000
         shifted = bridge.perturb(SPEC["params"], params, rng)
         assert 0.0 <= shifted["alpha"] <= 1.0
         assert 1 <= shifted["iters"] <= 100
         assert isinstance(shifted["iters"], int)
+        assert isinstance(shifted["batch"], int) and 10 <= shifted["batch"] <= 10000
 
 
 def test_builtin_engine_improves_on_quadratic(tmp_path: Path) -> None:
