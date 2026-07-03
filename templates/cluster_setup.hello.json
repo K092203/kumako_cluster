@@ -1,0 +1,4 @@
+{
+  "setup_command": "\"%SUPERCON_ROOT%\\tools\\w64devkit\\bin\\g++.exe\" -O2 -o hello.exe hello.cpp",
+  "timeout_sec": 300
+}

@@ -19,6 +19,27 @@ from pathlib import Path
 
 TUNE_RE = re.compile(r"#TUNE\s+(?P<body>.*)")
 
+# ソルバーは1スレッド・並列度はスロット数で稼ぐ(設計書§3.3)。ジョブの env で上書き可。
+THREAD_ENV_DEFAULTS = {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+
+
+def command_env(root: Path, worker_id: str, job_id: str | None = None, job_env: dict | None = None) -> dict:
+    env = os.environ.copy()
+    for key, value in THREAD_ENV_DEFAULTS.items():
+        env.setdefault(key, value)
+    env["SUPERCON_ROOT"] = str(root)
+    env["SUPERCON_WORKER_ID"] = worker_id
+    if job_id is not None:
+        env["SUPERCON_JOB_ID"] = job_id
+    if job_env:
+        env.update({str(k): str(v) for k, v in job_env.items()})
+    return env
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -163,19 +184,49 @@ def snapshot_digest(source: Path) -> str:
     return digest.hexdigest()
 
 
-def copy_repo_snapshot(root: Path, local_dir: Path) -> Path:
+def run_snapshot_setup(root: Path, local_dir: Path, target: Path, worker_id: str) -> None:
+    manifest_path = target / "cluster_setup.json"
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    command = manifest.get("setup_command")
+    if not command:
+        return
+    timeout_sec = float(manifest.get("timeout_sec", 600))
+    log_path = local_dir / "setup.log"
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"\n[{now_iso()}] setup: {command}\n")
+        completed = subprocess.run(
+            command,
+            cwd=str(target),
+            env=command_env(root, worker_id),
+            text=True,
+            capture_output=True,
+            timeout=timeout_sec,
+            shell=isinstance(command, str),
+        )
+        log.write(completed.stdout)
+        log.write(completed.stderr)
+        log.write(f"[{now_iso()}] setup exit={completed.returncode}\n")
+    if completed.returncode != 0:
+        raise RuntimeError(f"snapshot setup failed (exit {completed.returncode}); see {log_path}")
+
+
+def copy_repo_snapshot(root: Path, local_dir: Path, worker_id: str) -> Path:
     source = root / "repo_snapshot"
     target = local_dir / "repo"
     marker = local_dir / "repo.sha256"
     current = snapshot_digest(source)
     if target.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() == current:
         return target
+    marker.unlink(missing_ok=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     if source.exists() and any(source.iterdir()):
         shutil.copytree(source, target, dirs_exist_ok=True)
+    run_snapshot_setup(root, local_dir, target, worker_id)
     marker.write_text(current + "\n", encoding="utf-8")
     return target
 
@@ -209,6 +260,7 @@ def run_command(
     job: dict,
     repo_dir: Path,
     timeout_sec: float,
+    env: dict | None = None,
     heartbeat=None,
     heartbeat_sec: float = 30.0,
 ) -> tuple[str, str, int | None, bool]:
@@ -220,9 +272,10 @@ def run_command(
     if job.get("cwd"):
         cwd = (repo_dir / str(job["cwd"])).resolve()
 
-    env = os.environ.copy()
-    if isinstance(job.get("env"), dict):
-        env.update({str(k): str(v) for k, v in job["env"].items()})
+    if env is None:
+        env = os.environ.copy()
+        if isinstance(job.get("env"), dict):
+            env.update({str(k): str(v) for k, v in job["env"].items()})
 
     use_shell = isinstance(command, str)
     proc = subprocess.Popen(
@@ -281,10 +334,12 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
     error = ""
 
     try:
-        repo_dir = copy_repo_snapshot(root, local_dir)
+        repo_dir = copy_repo_snapshot(root, local_dir, worker_id)
         timeout_sec = float(job.get("timeout_sec", job.get("time_limit_sec", 30)))
         heartbeat = lambda: update_status(root, worker_id, "running", job_id)
-        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, heartbeat=heartbeat)
+        job_env = job.get("env") if isinstance(job.get("env"), dict) else None
+        env = command_env(root, worker_id, job_id, job_env)
+        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, env=env, heartbeat=heartbeat)
     except Exception as exc:
         error = str(exc)
         stderr += f"\nWORKER_ERROR: {error}\n"

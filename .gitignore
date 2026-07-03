@@ -13,3 +13,5 @@ __pycache__/
 workers/
 jobs/pending/
 repo_snapshot/
+tools/*
+!tools/README.md
