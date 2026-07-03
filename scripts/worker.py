@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -42,7 +44,10 @@ def read_worker_id(root: Path) -> str:
         text = worker_id_file.read_text(encoding="utf-8").strip()
         if text:
             return text
-    return "worker01"
+    raise SystemExit(
+        "no worker id: pass --worker-id, set SUPERCON_WORKER_ID, "
+        "or register this PC with start_worker_auto.bat (register_worker.py)"
+    )
 
 
 def update_status(root: Path, worker_id: str, status: str, current_job: str | None = None, message: str = "") -> None:
@@ -84,7 +89,9 @@ def ensure_layout(root: Path) -> None:
 def claim_job(root: Path, worker_id: str) -> Path | None:
     pending = root / "jobs" / "pending"
     running = root / "jobs" / "running"
-    for source in sorted(pending.glob("*.json")):
+    candidates = list(pending.glob("*.json"))
+    random.shuffle(candidates)
+    for source in candidates:
         target = running / f"{source.stem}--{worker_id}.json"
         try:
             os.replace(source, target)
@@ -147,15 +154,29 @@ def parse_tune(stdout: str, stderr: str, trusted: bool) -> dict:
     return {"elapsed": None, "score": None, "correct": None}
 
 
+def snapshot_digest(source: Path) -> str:
+    digest = hashlib.sha256()
+    if source.exists():
+        for path in sorted(p for p in source.rglob("*") if p.is_file()):
+            digest.update(str(path.relative_to(source)).encode("utf-8"))
+            digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def copy_repo_snapshot(root: Path, local_dir: Path) -> Path:
     source = root / "repo_snapshot"
     target = local_dir / "repo"
+    marker = local_dir / "repo.sha256"
+    current = snapshot_digest(source)
+    if target.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() == current:
+        return target
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     if source.exists() and any(source.iterdir()):
         shutil.copytree(source, target, dirs_exist_ok=True)
+    marker.write_text(current + "\n", encoding="utf-8")
     return target
 
 
@@ -173,10 +194,7 @@ def render_template(value: str, job: dict) -> str:
     values = {str(k): str(v) for k, v in job.items()}
     for key, replacement in values.items():
         value = value.replace(f"__{key}__", replacement)
-    try:
-        return value.format_map(values)
-    except Exception:
-        return value
+    return value
 
 
 def render_command(command: object, job: dict) -> object:
@@ -187,7 +205,13 @@ def render_command(command: object, job: dict) -> object:
     return command
 
 
-def run_command(job: dict, repo_dir: Path, timeout_sec: float) -> tuple[str, str, int | None, bool]:
+def run_command(
+    job: dict,
+    repo_dir: Path,
+    timeout_sec: float,
+    heartbeat=None,
+    heartbeat_sec: float = 30.0,
+) -> tuple[str, str, int | None, bool]:
     command = render_command(job.get("command"), job)
     if not command or command == "dummy":
         return run_dummy(job)
@@ -201,22 +225,29 @@ def run_command(job: dict, repo_dir: Path, timeout_sec: float) -> tuple[str, str
         env.update({str(k): str(v) for k, v in job["env"].items()})
 
     use_shell = isinstance(command, str)
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=str(cwd),
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=timeout_sec,
-            shell=use_shell,
-        )
-        return completed.stdout, completed.stderr, completed.returncode, False
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
-        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
-        stderr += f"\nTIMEOUT after {timeout_sec} seconds\n"
-        return stdout, stderr, None, True
+    proc = subprocess.Popen(
+        command,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=use_shell,
+    )
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            stderr = (stderr or "") + f"\nTIMEOUT after {timeout_sec} seconds\n"
+            return stdout or "", stderr, None, True
+        try:
+            stdout, stderr = proc.communicate(timeout=min(remaining, heartbeat_sec))
+            return stdout or "", stderr or "", proc.returncode, False
+        except subprocess.TimeoutExpired:
+            if heartbeat is not None:
+                heartbeat()
 
 
 def finish_job(root: Path, claimed_path: Path, job_id: str, failed: bool) -> None:
@@ -252,7 +283,8 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
     try:
         repo_dir = copy_repo_snapshot(root, local_dir)
         timeout_sec = float(job.get("timeout_sec", job.get("time_limit_sec", 30)))
-        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec)
+        heartbeat = lambda: update_status(root, worker_id, "running", job_id)
+        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, heartbeat=heartbeat)
     except Exception as exc:
         error = str(exc)
         stderr += f"\nWORKER_ERROR: {error}\n"
