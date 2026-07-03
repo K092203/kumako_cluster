@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 if "%~1"=="" (
   echo Usage: worker_loop_id.bat worker01

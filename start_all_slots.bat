@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 set "SLOTS=%~1"
 if "%SLOTS%"=="" set "SLOTS=14"

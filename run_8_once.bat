@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 pushd "%~dp0"
 for %%W in (worker01 worker02 worker03 worker04 worker05 worker06 worker07 worker08) do (
