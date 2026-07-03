@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -35,6 +36,30 @@ def existing_job_ids(root: Path) -> set[str]:
     return ids
 
 
+def coerce_value(text: str) -> object:
+    for cast in (int, float):
+        try:
+            return cast(text)
+        except ValueError:
+            continue
+    return text
+
+
+def parse_params(items: list[str]) -> dict:
+    params: dict[str, object] = {}
+    for item in items:
+        if "=" not in item:
+            raise SystemExit(f"invalid --param (expected key=value): {item}")
+        key, value = item.split("=", 1)
+        params[key] = coerce_value(value)
+    return params
+
+
+def sweep_id_for(params: dict) -> str:
+    payload = json.dumps(params, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
 def find_start(prefix: str, count: int, used: set[str]) -> int:
     number = 1
     while True:
@@ -43,7 +68,7 @@ def find_start(prefix: str, count: int, used: set[str]) -> int:
         number += 1
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create SuperCon cluster job JSON files.")
     parser.add_argument("--root", type=Path, default=default_root(), help="shared cluster root")
     parser.add_argument("--count", type=int, default=1, help="number of jobs to create")
@@ -59,14 +84,22 @@ def main() -> int:
         default=[],
         help="output file glob (relative to job cwd) to collect into results/, repeatable",
     )
+    parser.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        help="solver parameter key=value (repeatable); becomes job params and __key__ template value",
+    )
+    parser.add_argument("--sweep-id", default=None, help="explicit sweep id (default: hash of params)")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="optional command after --")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     command = args.command
     if command and command[0] == "--":
         command = command[1:]
     command_value: list[str] | str = command if command else "dummy"
 
+    params = parse_params(args.param)
     pending = args.root / "jobs" / "pending"
     pending.mkdir(parents=True, exist_ok=True)
     used = existing_job_ids(args.root)
@@ -93,6 +126,9 @@ def main() -> int:
         }
         if args.artifact:
             job["artifacts"] = list(args.artifact)
+        if params or args.sweep_id:
+            job["params"] = params
+            job["sweep_id"] = args.sweep_id or sweep_id_for(params)
         atomic_write_json(path, job)
         created.append(job_id)
 
