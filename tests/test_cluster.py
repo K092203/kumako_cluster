@@ -121,3 +121,16 @@ def test_render_template_only_dunder_keys() -> None:
     job = {"seed": 7, "case": "case001"}
     rendered = worker.render_template("run --seed __seed__ {case} {not_a_key}", job)
     assert rendered == "run --seed 7 {case} {not_a_key}"
+
+
+def test_all_scripts_have_python_version_guard() -> None:
+    # 学校PCの古いPythonで不可解に落ちないよう、全エントリスクリプトが
+    # _pyversion を import していること
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    missing = [
+        p.name
+        for p in sorted(scripts_dir.glob("*.py"))
+        if p.name != "_pyversion.py"
+        and "import _pyversion" not in p.read_text(encoding="utf-8")
+    ]
+    assert missing == []

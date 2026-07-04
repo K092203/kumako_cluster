@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import _pyversion  # noqa: F401  Pythonバージョン検査(3.9未満なら即エラー)
+
 import argparse
 import hashlib
 import json
@@ -176,11 +178,15 @@ def parse_tune(stdout: str, stderr: str, trusted: bool) -> dict:
 
 
 def snapshot_digest(source: Path) -> str:
+    # 相対パス+サイズ+mtime だけで判定し、SMB越しの全バイト読みを避ける。
+    # ジョブ冒頭に毎回呼ばれるため、内容ハッシュだと280スロット全部が
+    # スナップショット全体を読み直してしまう。
     digest = hashlib.sha256()
     if source.exists():
         for path in sorted(p for p in source.rglob("*") if p.is_file()):
+            stat = path.stat()
             digest.update(str(path.relative_to(source)).encode("utf-8"))
-            digest.update(path.read_bytes())
+            digest.update(f"\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00".encode("ascii"))
     return digest.hexdigest()
 
 

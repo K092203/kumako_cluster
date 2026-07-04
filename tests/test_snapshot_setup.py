@@ -91,6 +91,42 @@ def test_setup_failure_fails_job_and_retries(root: Path) -> None:
     assert marker.exists()
 
 
+def test_snapshot_digest_does_not_read_file_contents(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # SMB帯域対策: 判定は stat のみで行い、ファイル内容は読まないこと
+    (root / "repo_snapshot" / "big_solver.bin").write_bytes(b"x" * 4096)
+
+    def boom(self):
+        raise AssertionError("snapshot_digest must not read file contents")
+
+    monkeypatch.setattr(worker.Path, "read_bytes", boom)
+    digest = worker.snapshot_digest(root / "repo_snapshot")
+    assert len(digest) == 64
+
+
+def test_snapshot_digest_detects_mtime_and_size_changes(root: Path) -> None:
+    import os
+
+    target = root / "repo_snapshot" / "solver.py"
+    target.write_text("v1", encoding="utf-8")
+    os.utime(target, (1000, 1000))
+    d1 = worker.snapshot_digest(root / "repo_snapshot")
+
+    # 同サイズ・同mtimeの書き換えは検知しない(statベースの意図的なトレードオフ)
+    target.write_text("v2", encoding="utf-8")
+    os.utime(target, (1000, 1000))
+    assert worker.snapshot_digest(root / "repo_snapshot") == d1
+
+    # mtime が変われば検知する(通常の上書き保存はこちら)
+    os.utime(target, (2000, 2000))
+    d2 = worker.snapshot_digest(root / "repo_snapshot")
+    assert d2 != d1
+
+    # サイズが変われば mtime が同じでも検知する
+    target.write_text("v2-longer", encoding="utf-8")
+    os.utime(target, (2000, 2000))
+    assert worker.snapshot_digest(root / "repo_snapshot") != d2
+
+
 def test_job_env_injection_and_thread_defaults(root: Path) -> None:
     cmd = [
         sys.executable,
