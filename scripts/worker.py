@@ -19,6 +19,27 @@ from pathlib import Path
 
 TUNE_RE = re.compile(r"#TUNE\s+(?P<body>.*)")
 
+# ソルバーは1スレッド・並列度はスロット数で稼ぐ(設計書§3.3)。ジョブの env で上書き可。
+THREAD_ENV_DEFAULTS = {
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+}
+
+
+def command_env(root: Path, worker_id: str, job_id: str | None = None, job_env: dict | None = None) -> dict:
+    env = os.environ.copy()
+    for key, value in THREAD_ENV_DEFAULTS.items():
+        env.setdefault(key, value)
+    env["SUPERCON_ROOT"] = str(root)
+    env["SUPERCON_WORKER_ID"] = worker_id
+    if job_id is not None:
+        env["SUPERCON_JOB_ID"] = job_id
+    if job_env:
+        env.update({str(k): str(v) for k, v in job_env.items()})
+    return env
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -163,19 +184,49 @@ def snapshot_digest(source: Path) -> str:
     return digest.hexdigest()
 
 
-def copy_repo_snapshot(root: Path, local_dir: Path) -> Path:
+def run_snapshot_setup(root: Path, local_dir: Path, target: Path, worker_id: str) -> None:
+    manifest_path = target / "cluster_setup.json"
+    if not manifest_path.exists():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    command = manifest.get("setup_command")
+    if not command:
+        return
+    timeout_sec = float(manifest.get("timeout_sec", 600))
+    log_path = local_dir / "setup.log"
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"\n[{now_iso()}] setup: {command}\n")
+        completed = subprocess.run(
+            command,
+            cwd=str(target),
+            env=command_env(root, worker_id),
+            text=True,
+            capture_output=True,
+            timeout=timeout_sec,
+            shell=isinstance(command, str),
+        )
+        log.write(completed.stdout)
+        log.write(completed.stderr)
+        log.write(f"[{now_iso()}] setup exit={completed.returncode}\n")
+    if completed.returncode != 0:
+        raise RuntimeError(f"snapshot setup failed (exit {completed.returncode}); see {log_path}")
+
+
+def copy_repo_snapshot(root: Path, local_dir: Path, worker_id: str) -> Path:
     source = root / "repo_snapshot"
     target = local_dir / "repo"
     marker = local_dir / "repo.sha256"
     current = snapshot_digest(source)
     if target.exists() and marker.exists() and marker.read_text(encoding="utf-8").strip() == current:
         return target
+    marker.unlink(missing_ok=True)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True, exist_ok=True)
     if source.exists() and any(source.iterdir()):
         shutil.copytree(source, target, dirs_exist_ok=True)
+    run_snapshot_setup(root, local_dir, target, worker_id)
     marker.write_text(current + "\n", encoding="utf-8")
     return target
 
@@ -190,8 +241,62 @@ def run_dummy(job: dict) -> tuple[str, str, int, bool]:
     return stdout, stderr, 0, False
 
 
+def job_cwd(job: dict, repo_dir: Path) -> Path:
+    if job.get("cwd"):
+        return (repo_dir / str(job["cwd"])).resolve()
+    return repo_dir
+
+
+def artifact_globs(job: dict) -> list[str]:
+    artifacts = job.get("artifacts")
+    if isinstance(artifacts, str):
+        artifacts = [artifacts]
+    if not isinstance(artifacts, list):
+        return []
+    globs = []
+    for pattern in artifacts:
+        pattern = str(pattern)
+        if os.path.isabs(pattern) or ".." in Path(pattern).parts:
+            continue
+        globs.append(pattern)
+    return globs
+
+
+def clear_artifacts(cwd: Path, globs: list[str]) -> None:
+    for pattern in globs:
+        try:
+            matches = list(cwd.glob(pattern))
+        except (ValueError, NotImplementedError):
+            continue
+        for path in matches:
+            if path.is_file():
+                path.unlink(missing_ok=True)
+
+
+def collect_artifacts(cwd: Path, globs: list[str], result_dir: Path) -> dict:
+    collected: list[str] = []
+    missing: list[str] = []
+    for pattern in globs:
+        try:
+            matches = [p for p in cwd.glob(pattern) if p.is_file()]
+        except (ValueError, NotImplementedError):
+            matches = []
+        if not matches:
+            missing.append(pattern)
+            continue
+        for path in matches:
+            rel = path.relative_to(cwd)
+            dest = result_dir / "artifacts" / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+            collected.append(rel.as_posix())
+    return {"collected": sorted(collected), "missing": missing}
+
+
 def render_template(value: str, job: dict) -> str:
-    values = {str(k): str(v) for k, v in job.items()}
+    values = {str(k): str(v) for k, v in job.items() if not isinstance(v, (dict, list))}
+    if isinstance(job.get("params"), dict):
+        values.update({str(k): str(v) for k, v in job["params"].items()})
     for key, replacement in values.items():
         value = value.replace(f"__{key}__", replacement)
     return value
@@ -209,6 +314,7 @@ def run_command(
     job: dict,
     repo_dir: Path,
     timeout_sec: float,
+    env: dict | None = None,
     heartbeat=None,
     heartbeat_sec: float = 30.0,
 ) -> tuple[str, str, int | None, bool]:
@@ -216,13 +322,12 @@ def run_command(
     if not command or command == "dummy":
         return run_dummy(job)
 
-    cwd = repo_dir
-    if job.get("cwd"):
-        cwd = (repo_dir / str(job["cwd"])).resolve()
+    cwd = job_cwd(job, repo_dir)
 
-    env = os.environ.copy()
-    if isinstance(job.get("env"), dict):
-        env.update({str(k): str(v) for k, v in job["env"].items()})
+    if env is None:
+        env = os.environ.copy()
+        if isinstance(job.get("env"), dict):
+            env.update({str(k): str(v) for k, v in job["env"].items()})
 
     use_shell = isinstance(command, str)
     proc = subprocess.Popen(
@@ -279,12 +384,19 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
     exit_code: int | None = None
     timed_out = False
     error = ""
+    globs = artifact_globs(job)
+    artifacts = {"collected": [], "missing": list(globs)}
 
     try:
-        repo_dir = copy_repo_snapshot(root, local_dir)
+        repo_dir = copy_repo_snapshot(root, local_dir, worker_id)
         timeout_sec = float(job.get("timeout_sec", job.get("time_limit_sec", 30)))
         heartbeat = lambda: update_status(root, worker_id, "running", job_id)
-        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, heartbeat=heartbeat)
+        job_env = job.get("env") if isinstance(job.get("env"), dict) else None
+        env = command_env(root, worker_id, job_id, job_env)
+        cwd = job_cwd(job, repo_dir)
+        clear_artifacts(cwd, globs)
+        stdout, stderr, exit_code, timed_out = run_command(job, repo_dir, timeout_sec, env=env, heartbeat=heartbeat)
+        artifacts = collect_artifacts(cwd, globs, result_dir)
     except Exception as exc:
         error = str(exc)
         stderr += f"\nWORKER_ERROR: {error}\n"
@@ -311,10 +423,13 @@ def process_job(root: Path, worker_id: str, local_dir: Path, claimed_path: Path)
         {
             "job_id": job_id,
             "worker": worker_id,
+            "sweep_id": job.get("sweep_id"),
+            "params": job.get("params"),
             "outcome": outcome,
             "exit_code": exit_code,
             "wall_elapsed": round(wall_elapsed, 6),
             "measure": measure,
+            "artifacts": artifacts,
             "error": error,
             "finished_at": now_iso(),
         },
