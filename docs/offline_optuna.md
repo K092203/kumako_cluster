@@ -4,6 +4,9 @@
 ランダム+山登りサンプラーで動く。Optuna を使うほうが少ない試行数で良い
 パラメータに到達しやすいので、可能なら親機に導入する。
 
+探索の仕組み全体は [architecture.md](architecture.md) の「7. パラメータ探索ブリッジ」節、
+スペックの書き方は [job-format.md](job-format.md) の「探索スペック」節を参照。
+
 ## なぜ `git clone optuna/optuna` ではダメか
 
 Optuna 本体は numpy / colorlog / alembic / sqlalchemy / tqdm / PyYAML 等に
@@ -52,3 +55,18 @@ python scripts\optuna_bridge.py --spec my_search.json --engine builtin
 
 ブリッジを Ctrl+C で止めても、同じ spec で再実行すれば続きから探索する。
 投入済みジョブの結果は再利用される(同じ job_id の結果があれば再実行しない)。
+
+## バージョンについて
+
+`optuna_bridge.py` は JournalStorage のバックエンド import を optuna 3系
+(`JournalFileStorage`)と 4系(`storages.journal.JournalFileBackend`)の両方に
+対応させてある。どちらの系列でも動くので、wheel を集める際にバージョンを
+固定する必要はない。動作確認は次で足りる:
+
+```bat
+python -c "import optuna; from optuna.storages import JournalStorage; print(optuna.__version__)"
+```
+
+内蔵エンジンと Optuna は探索履歴の保存先が別(`.history.jsonl` と `.journal.log`)
+なので、途中でエンジンを切り替えると履歴は引き継がれない。本選中はどちらか一方に
+統一すること。
