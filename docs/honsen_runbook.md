@@ -96,6 +96,9 @@ rem    (模擬問題なら examples\mock_problem\scorer.py が採点器の代役
 ## 事前準備チェックリスト(〜8/16)
 
 - [ ] policy md「本選モード」チェックリスト完了(private化・filter-repo・ACL)
+      ※private化は完了(2026-07-04)。履歴除去は [history-purge.md](history-purge.md) 参照
+- [ ] 全PC(親機・子機)で `python --version` が **3.9 以上**であることを確認
+      (3.9未満では全スクリプトが起動時に明示エラーで止まる)
 - [ ] w64devkit 配置 + 学校PC1台で `verify_toolchain.bat` 実証
 - [ ] optuna wheel バンドル導入(`docs/offline_optuna.md`)
 - [ ] スロット数の実測決定(下記ベンチ手順)

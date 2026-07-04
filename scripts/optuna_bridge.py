@@ -9,6 +9,8 @@ stdlib-only random + hill-climb sampler with the same CLI.
 
 from __future__ import annotations
 
+import _pyversion  # noqa: F401  Pythonバージョン検査(3.9未満なら即エラー)
+
 import argparse
 import json
 import math

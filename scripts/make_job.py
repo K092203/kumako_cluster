@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import _pyversion  # noqa: F401  Pythonバージョン検査(3.9未満なら即エラー)
+
 import argparse
 import hashlib
 import json
