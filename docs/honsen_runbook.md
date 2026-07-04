@@ -3,6 +3,10 @@
 本選: 2026年8月17日(月)〜21日(金)、富岳、オンライン(学校から参加)。
 最終提出: **20日(木)13:00 厳守**。
 
+関連: クラスタの内部構造は [architecture.md](architecture.md)、JSONの仕様は
+[job-format.md](job-format.md)、規則対応チェックリストは
+[supercon_cluster_policy.md](../supercon_cluster_policy.md)「本選モード」節。
+
 ## 富岳利用時間帯(規則1条・時間帯外アクセス禁止)
 
 | 日 | 富岳 | ローカルクラスタ |
@@ -27,6 +31,25 @@
 夜間  無人探索(supervisor が落ちたスロットを自動再起動)
 翌朝  requeue_failed.bat --stale-running-sec 600 で孤児回収 → 9:00へ
 ```
+
+### 朝の富岳検証(具体手順)
+
+前夜の探索が出した最良を、富岳で「本当に良いか・正しいか」確認して提出候補にする。
+
+```bat
+rem 1. 夜間探索の最良パラメータと最良解を確認
+type state\search\<name>.best.json
+python scripts\summarize_results.py --by-sweep --agg min
+
+rem 2. 最良 sweep のパラメータで、提出用インスタンスの解を富岳で再生成
+rem    (ローカルの解は x86 産なので、富岳で同パラメータを実行し直す)
+
+rem 3. 生成した解を独立採点で検証してから提出
+rem    (模擬問題なら examples\mock_problem\scorer.py が採点器の代役)
+```
+
+ローカルの `results\...\artifacts\` の解は「良いパラメータの当たり」を知るために使い、
+提出物そのものは富岳で再生成・検証する。x86 と A64FX で結果が変わりうるため。
 
 ## 8/17(月) 問題公開からクラスタ稼働まで(目標2時間)
 

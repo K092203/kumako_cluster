@@ -3,6 +3,11 @@
 管理者権限なしの学校PCで C/C++ ソルバーをビルドするためのツールを置くディレクトリ。
 ツール本体はサイズが大きいため git 管理しない(このREADMEのみコミット)。
 
+ビルドフックの仕組みは [../docs/architecture.md](../docs/architecture.md) の
+「スナップショット差分同期とビルドフック」節、`cluster_setup.json` の全フィールドは
+[../docs/job-format.md](../docs/job-format.md) の「ビルドフック」節を参照。
+Optuna の wheel も同じ `tools/wheels/` に置く([../docs/offline_optuna.md](../docs/offline_optuna.md))。
+
 ## w64devkit の配置(管理者権限不要)
 
 1. ネットが使える環境で w64devkit の zip を取得する
