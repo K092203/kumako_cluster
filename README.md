@@ -97,6 +97,14 @@ verify_toolchain.bat
 start_worker_supervisor.bat 14        rem このPCで14スロットを起動・監視
 ```
 
+スロット数を固定せず、完了レートと失敗率(タイムアウト)から自動増減させたい場合は
+`--adapt` を付けます(実行中ジョブを失わずグレースフルに縮退。詳細と実測は
+[docs/validation_report_2026-07.md](docs/validation_report_2026-07.md))。
+
+```bat
+python scripts\supervise_slots.py --slots 14 --adapt --min-slots 2 --max-slots 14
+```
+
 親機から全PCへまとめて開始命令を出す場合(各PCで `start_launcher_agent.bat` を
 起動しておく):
 
@@ -187,6 +195,11 @@ python scripts\optuna_bridge.py --spec examples\mock_problem\search_spec.json ^
 ```
 
 - `--agg min` は「最悪シードでも良い」パラメータを選ぶ(過学習対策)
+- TPE は既定で **推奨設定**(`multivariate` + `constant_liar`)で動く。実測で
+  従来既定より収束が有意に良い([docs/validation_report_2026-07.md](docs/validation_report_2026-07.md))。
+  従来動作に戻すなら `--tpe-profile default`
+- 事前知識(「このパラメータはこの辺が良い」)があれば spec の各 param に
+  `prior` を書くと序盤の探索が加速する(下記スペック参照。opt-in)
 - Optuna 未導入なら `--engine builtin`(ランダム+山登り、標準ライブラリのみ)
 - Ctrl+C や `control/stop_all` で安全停止。再実行で途中から再開(結果は再利用)
 - 進捗は `status/bridge-<name>.json`、最良は `state/search/<name>.best.json`
@@ -201,7 +214,9 @@ python scripts\optuna_bridge.py --spec examples\mock_problem\search_spec.json ^
 ```bat
 status.bat                                    rem 各ワーカーの状態(60秒無更新でstale表示)
 summarize.bat                                 rem 結果一覧+ベスト(--update-incumbent付き)
-summarize.bat --by-sweep --agg min            rem パラメータセット単位で集計
+summarize.bat --by-sweep --agg min            rem パラメータセット単位で集計(mean/iqm/min/max)
+rem   --by-sweep の表には層化ブートストラップ95%CI列が付く。CIが重なる2案は
+rem   「そのシード数では優劣を判定できない」を意味する(rliable, Agarwal et al. 2021)
 requeue_failed.bat                            rem failed/ を pending/ へ戻す
 requeue_failed.bat --stale-running-sec 600    rem 加えて、落ちたワーカーの孤児ジョブを回収
 python scripts\archive_results.py             rem done/failed/results を archive/<日付>/ へ退避

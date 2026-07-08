@@ -48,6 +48,9 @@ python scripts\optuna_bridge.py --spec my_search.json --engine builtin
 内蔵エンジンはランダム探索+現職近傍の摂動(山登り)で、標準ライブラリ
 のみで動く。TPE より収束は遅いが、夜間の大量試行なら実用になる。
 
+なお `--tpe-profile`(TPE の推奨設定)は Optuna 導入時のみ効く。内蔵エンジンでは
+無視される。spec の `prior`(事前分布注入)は両エンジンとも対応する。
+
 ## ストレージについて
 
 - Optuna: `state/search/<name>.journal.log`(JournalStorage、DBサーバ不要、再開可能)

@@ -69,7 +69,8 @@ rem    (模擬問題なら examples\mock_problem\scorer.py が採点器の代役
 | 状態確認 | `status.bat`(stale が出たら該当PCを見る) |
 | ジョブ投入 | `make_job.bat --count N --param k=v --artifact out/sol.txt -- <cmd>` |
 | 探索開始 | `python scripts\optuna_bridge.py --spec spec.json --max-trials 1000 --agg min` |
-| 集計 | `summarize.bat --by-sweep --agg min` |
+| 集計 | `summarize.bat --by-sweep --agg min`(表に95%CI列。CIが重なる2案は差を判定不能) |
+| スロット自動増減 | `python scripts\supervise_slots.py --slots 14 --adapt`(負荷変動時の保険) |
 | 失敗再投入 | `requeue_failed.bat` |
 | 孤児回収 | `requeue_failed.bat --stale-running-sec 600` |
 | 全停止 | `control\stop_all` ファイルを作る(`type nul > control\stop_all`) |

@@ -147,7 +147,11 @@ outcome は次のいずれか:
 3層で「ジョブが黙って消える」を防ぐ。
 
 1. **supervisor**: [supervise_slots.py](../scripts/supervise_slots.py) が各スロットの
-   プロセスを監視し、落ちていれば再起動する(PCが生きている限りスロットは復活)
+   プロセスを監視し、落ちていれば再起動する(PCが生きている限りスロットは復活)。
+   `--adapt` を付けると、成功完了レートと失敗率(タイムアウト)から AIMD で
+   スロット数を動的に増減する(縮退は stop ファイルで実行中ジョブを失わずグレースフル。
+   Pollux, OSDI 2021 の goodput 駆動再割当の最小形。実測は
+   [validation_report_2026-07.md](validation_report_2026-07.md))
 2. **孤児ジョブ回収**: PCごと落ちると `running/` にジョブが取り残される。
    `requeue_failed.py --stale-running-sec N` が、`running/` 内で mtime が N 秒より古く、
    かつ**担当ワーカーの status も stale(または欠損)**なジョブだけを `pending/` へ戻す。
@@ -165,8 +169,13 @@ outcome は次のいずれか:
 
 - **ジョブ単位(既定)**: 各ジョブを一覧し、候補(completed かつ correct≠false かつ
   score≠null)からベストを選ぶ
-- **sweep単位(`--by-sweep`)**: `sweep_id` ごとに n / ok / mean / min / max を集計。
-  `--agg mean|min|max` でランキング基準を選ぶ
+- **sweep単位(`--by-sweep`)**: `sweep_id` ごとに n / ok / mean / iqm / min / max と
+  層化ブートストラップ95%CIを集計。`--agg mean|iqm|min|max` でランキング基準を選ぶ
+  (既定 mean)。CIが重なる2案は「そのシード数では優劣を判定できない」を示す。
+  `iqm`(四分位平均)と層化CIは rliable(Agarwal et al., NeurIPS 2021)由来。
+  ※本リポジトリのソルバーでの実測では IQM 点推定は mean より誤判定が多かったため
+  既定は mean のまま(判断の信頼性を上げるのは主に CI 列。
+  [validation_report_2026-07.md](validation_report_2026-07.md))
 
 `--update-incumbent` で `state/incumbent.json` を更新する(mode により内容が変わる。
 [job-format.md](job-format.md#stateincumbentjson) 参照)。
@@ -196,6 +205,12 @@ engine.tell(ref, params, value)   ※失敗トライアルは FAIL
 
 - **in-flight 制限** `--parallel`(既定32): 同時進行トライアル数の上限。TPE は逐次性が
   あり高並列で質が落ちるため32程度に抑える
+- **TPE設定** `--tpe-profile`(既定 `recommended`): `multivariate`(パラメータ間相関を
+  捉える)+ `constant_liar`(並列 ask/tell での重複提案抑制)を有効化。実測で従来既定
+  (`default`)より収束が有意に良い(arXiv:2304.11127。[validation_report_2026-07.md](validation_report_2026-07.md))
+- **事前分布注入** spec の param に `prior: {center, confidence}` を書くと、πBO(ICLR 2022)
+  方式で β/(β+t) 減衰する確率で事前分布から初期試行を引く。`--no-prior` で無効化。
+  誤った prior でも試行が進めば回復する(opt-in。書かなければ従来動作)
 - **エンジン2種**:
   - Optuna(あれば): TPE + `JournalStorage`(`state/search/<name>.journal.log`、
     DBサーバ不要・再開可能)。optuna 3系/4系の import 差を吸収
