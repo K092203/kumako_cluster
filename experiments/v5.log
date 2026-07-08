@@ -1,0 +1,19 @@
+
+Compiled modules for significant speedup can not be used!
+https://pymoo.org/installation.html#installation
+
+To disable this warning:
+from pymoo.config import Config
+Config.warnings['not_compiled'] = False
+
+
+Compiled modules for significant speedup can not be used!
+https://pymoo.org/installation.html#installation
+
+To disable this warning:
+from pymoo.config import Config
+Config.warnings['not_compiled'] = False
+
+best20 {"tpe_mean": 72.56575152294474, "tpe_sd": 0.10993738834344238, "hebo_mean": 72.6957762556886, "hebo_sd": 0.06001169965936105, "diff_mean_hebo_minus_tpe": 0.13002473274386545, "diff_ci95": [0.06833126845956058, 0.1985385979302876], "wins": 9, "losses": 1, "reps": 10}
+best40 {"tpe_mean": 72.65908026689708, "tpe_sd": 0.0737384212468065, "hebo_mean": 72.72065084581436, "hebo_sd": 0.03687327741463311, "diff_mean_hebo_minus_tpe": 0.061570578917286414, "diff_ci95": [0.017304546623385875, 0.1111117851414832], "wins": 8, "losses": 2, "reps": 10}
+sampler_sec {"tpe": 0.34, "hebo": 109.008}
