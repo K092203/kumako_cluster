@@ -1,0 +1,9 @@
+small {"iters_b": 300, "true_mean_b": 71.64751830292957, "gap_in_sd": 0.13757081461817355}
+small n=5 {"mean_error_rate": 0.24275, "iqm_error_rate": 0.284, "ci_declare_rate": 0.0, "ci_precision_when_declared": null, "resamples_point": 4000, "resamples_ci": 1000}
+small n=15 {"mean_error_rate": 0.11375, "iqm_error_rate": 0.162, "ci_declare_rate": 0.166, "ci_precision_when_declared": 0.9819277108433735, "resamples_point": 4000, "resamples_ci": 1000}
+mid {"iters_b": 200, "true_mean_b": 70.8403769093636, "gap_in_sd": 0.4510280646480573}
+mid n=5 {"mean_error_rate": 0.03825, "iqm_error_rate": 0.065, "ci_declare_rate": 0.0, "ci_precision_when_declared": null, "resamples_point": 4000, "resamples_ci": 1000}
+mid n=15 {"mean_error_rate": 0.0005, "iqm_error_rate": 0.0035, "ci_declare_rate": 0.647, "ci_precision_when_declared": 1.0, "resamples_point": 4000, "resamples_ci": 1000}
+large {"iters_b": 120, "true_mean_b": 69.45577607911855, "gap_in_sd": 0.9887444698496614}
+large n=5 {"mean_error_rate": 0.00175, "iqm_error_rate": 0.00475, "ci_declare_rate": 0.001, "ci_precision_when_declared": 1.0, "resamples_point": 4000, "resamples_ci": 1000}
+large n=15 {"mean_error_rate": 0.0, "iqm_error_rate": 0.0, "ci_declare_rate": 0.981, "ci_precision_when_declared": 1.0, "resamples_point": 4000, "resamples_ci": 1000}
