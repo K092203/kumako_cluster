@@ -1,0 +1,59 @@
+{
+ "rows": [
+  {
+   "scenario": "cpu_static12",
+   "kind": "cpu",
+   "minutes": 5,
+   "slots_start": 12,
+   "adapt": false,
+   "done": 0,
+   "failed": 444,
+   "goodput_per_min": 0.0,
+   "final_slots": 12
+  },
+  {
+   "scenario": "cpu_adapt12",
+   "kind": "cpu",
+   "minutes": 5,
+   "slots_start": 12,
+   "adapt": true,
+   "done": 267,
+   "failed": 82,
+   "goodput_per_min": 53.4,
+   "final_slots": 12
+  },
+  {
+   "scenario": "cpu_static4",
+   "kind": "cpu",
+   "minutes": 5,
+   "slots_start": 4,
+   "adapt": false,
+   "done": 338,
+   "failed": 0,
+   "goodput_per_min": 67.6,
+   "final_slots": 4
+  },
+  {
+   "scenario": "sleep_static4",
+   "kind": "sleep",
+   "minutes": 3,
+   "slots_start": 4,
+   "adapt": false,
+   "done": 356,
+   "failed": 0,
+   "goodput_per_min": 118.7,
+   "final_slots": 4
+  },
+  {
+   "scenario": "sleep_adapt4",
+   "kind": "sleep",
+   "minutes": 3,
+   "slots_start": 4,
+   "adapt": true,
+   "done": 576,
+   "failed": 0,
+   "goodput_per_min": 192.0,
+   "final_slots": 4
+  }
+ ]
+}

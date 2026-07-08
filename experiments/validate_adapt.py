@@ -45,6 +45,7 @@ def run_scenario(name: str, kind: str, minutes: float, slots: int, adapt: bool, 
     root = BASE / name
     shutil.rmtree(root, ignore_errors=True)
     (root / "repo_snapshot").mkdir(parents=True)
+    shutil.copytree(WT / "scripts", root / "scripts")  # supervisorはroot直下のscriptsを参照する
     enqueue(root, kind, count)
     cmd = [sys.executable, str(WT / "scripts" / "supervise_slots.py"), "--root", str(root),
            "--slots", str(slots), "--local-base", str(root / "local"), "--restart-delay-sec", "0.5"]
@@ -62,7 +63,8 @@ def run_scenario(name: str, kind: str, minutes: float, slots: int, adapt: bool, 
     time.sleep(2)
     done = len(list((root / "jobs" / "done").glob("*.json")))
     failed = len(list((root / "jobs" / "failed").glob("*.json")))
-    sup = json.loads((root / "status").glob("*-supervisor.json").__iter__().__next__().read_text())
+    sup_files = list((root / "status").glob("*-supervisor.json"))
+    sup = json.loads(sup_files[0].read_text()) if sup_files else {}
     row = {"scenario": name, "kind": kind, "minutes": minutes, "slots_start": slots,
            "adapt": adapt, "done": done, "failed": failed,
            "goodput_per_min": round(done / minutes, 1), "final_slots": sup.get("slots")}
