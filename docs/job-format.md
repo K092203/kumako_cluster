@@ -142,12 +142,17 @@ supervisor は `<id>-supervisor.json`、launcher は `<id>-launcher.json`、探�
 | `int` | `low`, `high`, `log?` | 整数値 |
 | `cat` | `choices` | カテゴリ(非空リスト) |
 
+任意で各 param に **事前分布** `prior: {center, confidence}` を付けられる(πBO 方式)。
+`center` は「だいたいこの辺が良い」という中心値(数値は範囲内、cat は choices のいずれか)、
+`confidence` は 0〜1 の強さ。書いた場合、序盤の一定割合が prior 近傍からサンプルされる
+(`optuna_bridge.py --no-prior` で無効化)。書かなければ従来どおり範囲一様。
+
 ```json
 {
   "name": "mock-placement",
   "params": {
     "iters": {"type": "int", "low": 200, "high": 20000, "log": true},
-    "t0": {"type": "float", "low": 0.1, "high": 50.0, "log": true},
+    "t0": {"type": "float", "low": 0.1, "high": 50.0, "log": true, "prior": {"center": 5.0, "confidence": 0.7}},
     "strategy": {"type": "cat", "choices": ["greedy", "anneal"]}
   },
   "command": ["python", "solver.py", "--seed", "__seed__", "--iters", "__iters__", "--out", "out/solution.txt"],
@@ -173,9 +178,12 @@ supervisor は `<id>-supervisor.json`、launcher は `<id>-launcher.json`、探�
 **sweep単位(`--by-sweep`)**:
 
 ```json
-{"mode": "sweep", "objective": "max-score", "agg": "min",
- "sweep_id": "...", "params": {...}, "score": 74.3, "n": 5, "ok": 5}
+{"mode": "sweep", "objective": "max-score", "agg": "mean",
+ "sweep_id": "...", "params": {...}, "score": 74.3, "ci95": [73.9, 74.6], "n": 5, "ok": 5}
 ```
+
+`agg` は `mean`(既定)/`iqm`/`min`/`max`。`ci95` は層化ブートストラップ95%信頼区間
+(値が少なく層が退化する場合は `[null, null]`)。
 
 探索ブリッジの最良は別途 `state/search/<name>.best.json` に随時保存される。
 

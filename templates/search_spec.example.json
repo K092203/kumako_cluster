@@ -2,7 +2,7 @@
   "name": "example-search",
   "params": {
     "alpha": {"type": "float", "low": 0.0, "high": 1.0},
-    "cooling": {"type": "float", "low": 0.001, "high": 1.0, "log": true},
+    "cooling": {"type": "float", "low": 0.001, "high": 1.0, "log": true, "prior": {"center": 0.05, "confidence": 0.6}},
     "iters": {"type": "int", "low": 100, "high": 100000, "log": true},
     "strategy": {"type": "cat", "choices": ["greedy", "anneal"]}
   },
