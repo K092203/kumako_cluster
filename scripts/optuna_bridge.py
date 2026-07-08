@@ -154,8 +154,23 @@ class BuiltinEngine:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def make_tpe_sampler(optuna, profile: str, seed: int | None = None):
+    """TPE sampler for the bridge.
+
+    profile="recommended": multivariate=True (Watanabe, arXiv:2304.11127 の
+    アブレーションで推奨された多変量カーネル化) + constant_liar=True
+    (本ブリッジは常に複数trialをin-flightにするため、並列ask/tellでの
+    重複提案を避ける。Optuna公式が並列時に推奨)。
+    profile="default": 従来どおり TPESampler() の既定値。
+    """
+    if profile == "default":
+        return optuna.samplers.TPESampler(seed=seed)
+    return optuna.samplers.TPESampler(multivariate=True, constant_liar=True, seed=seed)
+
+
 class OptunaEngine:
-    def __init__(self, spec: dict, direction: str, journal_path: Path, study_name: str):
+    def __init__(self, spec: dict, direction: str, journal_path: Path, study_name: str,
+                 tpe_profile: str = "recommended", seed: int | None = None):
         import optuna
 
         self.optuna = optuna
@@ -167,6 +182,7 @@ class OptunaEngine:
             storage=storage,
             direction="minimize" if direction == "min" else "maximize",
             load_if_exists=True,
+            sampler=make_tpe_sampler(optuna, tpe_profile, seed),
         )
 
     def _make_storage(self, path: Path):
@@ -208,7 +224,8 @@ def make_engine(spec: dict, args) -> tuple[object, str]:
     state_dir = args.root / "state" / "search"
     if args.engine in ("auto", "optuna"):
         try:
-            engine = OptunaEngine(spec, args.direction, state_dir / f"{spec['name']}.journal.log", spec["name"])
+            engine = OptunaEngine(spec, args.direction, state_dir / f"{spec['name']}.journal.log", spec["name"],
+                                  tpe_profile=args.tpe_profile, seed=args.seed)
             return engine, "optuna"
         except ImportError:
             if args.engine == "optuna":
@@ -375,7 +392,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--engine", choices=["auto", "optuna", "builtin"], default="auto")
     parser.add_argument("--poll-sec", type=float, default=5.0)
     parser.add_argument("--trial-timeout-sec", type=float, default=None, help="default: job timeout*3 + 300")
-    parser.add_argument("--seed", type=int, default=None, help="rng seed for builtin engine")
+    parser.add_argument("--seed", type=int, default=None, help="rng seed for the sampler")
+    parser.add_argument("--tpe-profile", choices=["recommended", "default"], default="recommended",
+                        help="TPE設定: recommended=multivariate+constant_liar (arXiv:2304.11127), default=Optuna既定値")
     args = parser.parse_args(argv)
 
     args.root = args.root.resolve()
