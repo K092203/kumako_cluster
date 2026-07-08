@@ -118,3 +118,13 @@ def test_by_sweep_ignores_failed_jobs(root: Path, capsys: pytest.CaptureFixture)
     line = next(l for l in out.splitlines() if l.startswith("sweepA"))
     fields = line.split()
     assert fields[1] == "2" and fields[2] == "1"  # n=2, ok=1
+
+
+def test_iqm_and_bootstrap_ci():
+    from summarize_results import iqm, stratified_bootstrap_ci
+
+    assert iqm([1.0, 2.0, 3.0, 4.0, 100.0]) == 3.0  # 上下25%を捨てた中央3値の平均
+    assert iqm([5.0, 7.0]) == 6.0  # n<4 は全体平均
+    lo, hi = stratified_bootstrap_ci([[1.0, 1.1], [2.0, 2.1]], iqm, n_boot=500, seed=1)
+    assert lo is not None and lo <= hi
+    assert stratified_bootstrap_ci([], iqm) == (None, None)

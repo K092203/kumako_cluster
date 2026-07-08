@@ -8,7 +8,54 @@ import _pyversion  # noqa: F401  Pythonバージョン検査(3.9未満なら即�
 import argparse
 import json
 import os
+import random
+import re
 from pathlib import Path
+
+INSTANCE_RE = re.compile(r"-i(\d+)$")
+
+
+def iqm(values: list) -> float:
+    """四分位平均 (interquartile mean): 上下25%を捨てた残りの平均。
+
+    少数run比較で外れ値に引きずられにくい点推定として
+    Agarwal et al. (NeurIPS 2021, rliable) が推奨する統計量。
+    n<4 のときは全体平均に一致する。
+    """
+    vs = sorted(values)
+    cut = len(vs) // 4
+    core = vs[cut:len(vs) - cut] if len(vs) - 2 * cut > 0 else vs
+    return sum(core) / len(core)
+
+
+def stratified_bootstrap_ci(strata: list, stat, n_boot: int = 2000, alpha: float = 0.05, seed: int = 0):
+    """層(=インスタンスseed)ごとに再標本化するブートストラップ95%CI。
+
+    Agarwal et al. (NeurIPS 2021) の stratified bootstrap に倣い、
+    各層内で復元抽出して統計量の分布を作りパーセンタイル区間を返す。
+    """
+    strata = [st for st in strata if st]
+    if not strata or sum(len(st) for st in strata) < 2:
+        return None, None
+    if all(len(st) == 1 for st in strata):
+        # 各インスタンス1runだと層内再標本化が退化するので、全体を1層として扱う
+        strata = [[v for st in strata for v in st]]
+    rng = random.Random(seed)
+    stats = []
+    for _ in range(n_boot):
+        sample = []
+        for stratum in strata:
+            sample.extend(rng.choice(stratum) for _ in stratum)
+        stats.append(stat(sample))
+    stats.sort()
+    lo = stats[int((alpha / 2) * n_boot)]
+    hi = stats[min(n_boot - 1, int((1 - alpha / 2) * n_boot))]
+    return lo, hi
+
+
+def instance_key(result: dict) -> str:
+    match = INSTANCE_RE.search(str(result.get("job_id", "")))
+    return match.group(1) if match else str(result.get("job_id", ""))
 
 
 def default_root() -> Path:
@@ -69,15 +116,27 @@ def aggregate_sweeps(results: list[dict], objective: str, agg: str) -> list[dict
 
     rows = []
     for sweep_id, items in sorted(groups.items()):
-        values = [v for v in (sweep_metric(r, objective) for r in items) if v is not None]
+        values = []
+        strata_map: dict[str, list[float]] = {}
+        for r in items:
+            v = sweep_metric(r, objective)
+            if v is None:
+                continue
+            values.append(v)
+            strata_map.setdefault(instance_key(r), []).append(v)
+        stat = iqm if agg == "iqm" else (lambda vs: sum(vs) / len(vs))
+        lo, hi = stratified_bootstrap_ci(list(strata_map.values()), stat) if values else (None, None)
         row = {
             "sweep_id": sweep_id,
             "n": len(items),
             "ok": len(values),
             "params": next((r.get("params") for r in items if r.get("params")), None),
             "mean": sum(values) / len(values) if values else None,
+            "iqm": iqm(values) if values else None,
             "min": min(values) if values else None,
             "max": max(values) if values else None,
+            "ci_low": lo,
+            "ci_high": hi,
         }
         row["agg_score"] = row[agg]
         rows.append(row)
@@ -107,13 +166,14 @@ def summarize_by_sweep(root: Path, results: list[dict], objective: str, agg: str
         print("no sweep results yet (jobs need params/sweep_id)")
         return 0
 
-    print(f"sweep_id      n     ok    mean        min         max         params")
-    print("------------  ----  ----  ----------  ----------  ----------  ------")
+    print(f"sweep_id      n     ok    mean        iqm         ci95                      min         max         params")
+    print("------------  ----  ----  ----------  ----------  ------------------------  ----------  ----------  ------")
     for row in rows:
         params = json.dumps(row["params"], ensure_ascii=False, sort_keys=True) if row["params"] else "-"
+        ci = f"[{fmt(row['ci_low'])}, {fmt(row['ci_high'])}]" if row["ci_low"] is not None else "-"
         print(
             f"{row['sweep_id']:<12}  {row['n']:<4}  {row['ok']:<4}  "
-            f"{fmt(row['mean']):<10}  {fmt(row['min']):<10}  {fmt(row['max']):<10}  {params}"
+            f"{fmt(row['mean']):<10}  {fmt(row['iqm']):<10}  {ci:<24}  {fmt(row['min']):<10}  {fmt(row['max']):<10}  {params}"
         )
 
     best = choose_best_sweep(rows, objective)
@@ -123,7 +183,7 @@ def summarize_by_sweep(root: Path, results: list[dict], objective: str, agg: str
 
     print(
         f"best sweep ({agg} {objective}): {best['sweep_id']} "
-        f"agg_score={fmt(best['agg_score'])} n={best['n']} ok={best['ok']} "
+        f"agg_score={fmt(best['agg_score'])} ci95=[{fmt(best['ci_low'])}, {fmt(best['ci_high'])}] n={best['n']} ok={best['ok']} "
         f"params={json.dumps(best['params'], ensure_ascii=False, sort_keys=True) if best['params'] else '-'}"
     )
 
@@ -137,6 +197,7 @@ def summarize_by_sweep(root: Path, results: list[dict], objective: str, agg: str
                 "sweep_id": best["sweep_id"],
                 "params": best["params"],
                 "score": best["agg_score"],
+                "ci95": [best["ci_low"], best["ci_high"]],
                 "n": best["n"],
                 "ok": best["ok"],
             },
@@ -151,7 +212,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--objective", choices=["max-score", "min-elapsed"], default="max-score")
     parser.add_argument("--update-incumbent", action="store_true")
     parser.add_argument("--by-sweep", action="store_true", help="aggregate results per sweep_id (parameter set)")
-    parser.add_argument("--agg", choices=["mean", "min", "max"], default="mean", help="aggregation for --by-sweep ranking")
+    # 既定は mean のまま: 実測(experiments/results_iqm.json)で本ソルバーの
+    # スコア分布ではIQM点推定の誤判定率がmeanを上回った。IQMは選択肢として残す。
+    parser.add_argument("--agg", choices=["mean", "iqm", "min", "max"], default="mean",
+                        help="aggregation for --by-sweep ranking (iqm=四分位平均, Agarwal et al. NeurIPS 2021)")
     args = parser.parse_args(argv)
 
     results = load_results(args.root)
