@@ -114,7 +114,7 @@ def test_by_sweep_ignores_failed_jobs(root: Path, capsys: pytest.CaptureFixture)
     summarize_results.main(["--root", str(root), "--by-sweep"])
     out = capsys.readouterr().out
     assert "sweepA" in out
-    assert "best sweep (iqm max-score): sweepA" in out
+    assert "best sweep (mean max-score): sweepA" in out
     line = next(l for l in out.splitlines() if l.startswith("sweepA"))
     fields = line.split()
     assert fields[1] == "2" and fields[2] == "1"  # n=2, ok=1

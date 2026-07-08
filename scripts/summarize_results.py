@@ -212,7 +212,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--objective", choices=["max-score", "min-elapsed"], default="max-score")
     parser.add_argument("--update-incumbent", action="store_true")
     parser.add_argument("--by-sweep", action="store_true", help="aggregate results per sweep_id (parameter set)")
-    parser.add_argument("--agg", choices=["mean", "iqm", "min", "max"], default="iqm",
+    # 既定は mean のまま: 実測(experiments/results_iqm.json)で本ソルバーの
+    # スコア分布ではIQM点推定の誤判定率がmeanを上回った。IQMは選択肢として残す。
+    parser.add_argument("--agg", choices=["mean", "iqm", "min", "max"], default="mean",
                         help="aggregation for --by-sweep ranking (iqm=四分位平均, Agarwal et al. NeurIPS 2021)")
     args = parser.parse_args(argv)
 
