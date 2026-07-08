@@ -204,8 +204,93 @@ class OptunaEngine:
             self.study.tell(ref, score)
 
 
+class HEBOEngine:
+    """HEBO (Cowen-Rivers et al., JAIR vol.74, 2022) をブリッジの ask/tell に適合させる。
+
+    入出力の非線形ワーピングにより、seed依存のスコアノイズ(分散不均一)や
+    非定常な目的関数に頑健なベイズ最適化。NeurIPS 2020 BBO チャレンジ優勝手法。
+    resume は builtin と同じ JSONL 履歴の replay で行う。
+    """
+
+    def __init__(self, spec: dict, direction: str, state_path: Path, seed: int | None = None):
+        import numpy as np
+        from hebo.design_space.design_space import DesignSpace
+        from hebo.optimizers.hebo import HEBO
+
+        self.np = np
+        if seed is not None:
+            np.random.seed(seed)
+        self.sign = -1.0 if direction == "max" else 1.0  # HEBOは最小化
+        self.direction = direction
+        self.params_spec = spec["params"]
+        defs = []
+        for name, p in spec["params"].items():
+            if p["type"] == "cat":
+                defs.append({"name": name, "type": "cat", "categories": list(p["choices"])})
+            elif p["type"] == "int":
+                defs.append({"name": name, "type": "pow_int" if p.get("log") else "int",
+                             "lb": int(p["low"]), "ub": int(p["high"])})
+            else:
+                defs.append({"name": name, "type": "pow" if p.get("log") else "num",
+                             "lb": p["low"], "ub": p["high"]})
+        self.opt = HEBO(DesignSpace().parse(defs))
+        self.state_path = state_path
+        self.next_number = 0
+        self._best: dict | None = None
+        if state_path.exists():
+            for line in state_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                self.next_number = max(self.next_number, rec["number"] + 1)
+                self._observe(rec["params"], rec["score"])
+
+    def _observe(self, params: dict, score: float | None) -> None:
+        if score is None:
+            return
+        import pandas as pd
+
+        row = {}
+        for name, p in self.params_spec.items():
+            v = params[name]
+            row[name] = int(v) if p["type"] == "int" else v
+        self.opt.observe(pd.DataFrame([row]), self.np.array([[self.sign * float(score)]]))
+        if self._best is None or (score > self._best["score"]) == (self.direction == "max"):
+            self._best = {"number": self.next_number - 1, "params": params, "score": score}
+
+    def best(self) -> dict | None:
+        return self._best
+
+    def ask(self) -> tuple[int, dict]:
+        rec = self.opt.suggest(n_suggestions=1)
+        params: dict[str, object] = {}
+        for name, p in self.params_spec.items():
+            v = rec.iloc[0][name]
+            if p["type"] == "int":
+                params[name] = int(v)
+            elif p["type"] == "cat":
+                params[name] = v if isinstance(v, str) else p["choices"][int(v)]
+            else:
+                params[name] = float(v)
+        number = self.next_number
+        self.next_number += 1
+        return number, params
+
+    def tell(self, ref: object, params: dict, score: float | None) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.state_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"number": ref, "params": params, "score": score}, ensure_ascii=False) + "\n")
+        self._observe(params, score)
+
+
 def make_engine(spec: dict, args) -> tuple[object, str]:
     state_dir = args.root / "state" / "search"
+    if args.engine == "hebo":
+        try:
+            return HEBOEngine(spec, args.direction, state_dir / f"{spec['name']}.hebo.jsonl", args.seed), "hebo"
+        except ImportError:
+            raise SystemExit("hebo is not importable; install it (docs/offline_optuna.md) or use another --engine")
     if args.engine in ("auto", "optuna"):
         try:
             engine = OptunaEngine(spec, args.direction, state_dir / f"{spec['name']}.journal.log", spec["name"])
@@ -372,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--parallel", type=int, default=32, help="max in-flight trials (TPE degrades beyond ~32)")
     parser.add_argument("--agg", choices=["mean", "min", "max"], default="mean")
     parser.add_argument("--direction", choices=["max", "min"], default="max")
-    parser.add_argument("--engine", choices=["auto", "optuna", "builtin"], default="auto")
+    parser.add_argument("--engine", choices=["auto", "optuna", "hebo", "builtin"], default="auto")
     parser.add_argument("--poll-sec", type=float, default=5.0)
     parser.add_argument("--trial-timeout-sec", type=float, default=None, help="default: job timeout*3 + 300")
     parser.add_argument("--seed", type=int, default=None, help="rng seed for builtin engine")
