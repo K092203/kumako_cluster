@@ -58,6 +58,17 @@ def load_spec(path: Path) -> dict:
                 raise SystemExit(f"param {name}: requires low < high")
             if p.get("log") and p["low"] <= 0:
                 raise SystemExit(f"param {name}: log scale requires low > 0")
+        prior = p.get("prior")
+        if prior is not None:
+            if "center" not in prior:
+                raise SystemExit(f"param {name}: prior requires 'center'")
+            conf = prior.get("confidence", 0.5)
+            if not (0 < conf <= 1):
+                raise SystemExit(f"param {name}: prior confidence must be in (0, 1]")
+            if kind == "cat" and prior["center"] not in p["choices"]:
+                raise SystemExit(f"param {name}: prior center must be one of choices")
+            if kind != "cat" and not (p["low"] <= prior["center"] <= p["high"]):
+                raise SystemExit(f"param {name}: prior center must be within [low, high]")
     if not spec.get("command"):
         raise SystemExit("spec must define 'command'")
     if not isinstance(spec.get("instances"), list) or not spec["instances"]:
@@ -109,6 +120,50 @@ def perturb(params_spec: dict, base: dict, rng: random.Random) -> dict:
     return params
 
 
+# ---------------------------------------------------------------------------
+# user-belief prior (πBO: Hvarfner et al. ICLR 2022 / PriorBand: Mallik et al. NeurIPS 2023)
+
+
+def spec_has_prior(spec: dict) -> bool:
+    return any(p.get("prior") for p in spec["params"].values())
+
+
+def sample_from_prior(params_spec: dict, rng: random.Random) -> dict:
+    """「専門家の勘」を中心としたガウス分布(catは confidence 混合)からサンプルする。
+
+    confidence が高いほど分布が center 周辺に集中する:
+    数値は sigma = (1-confidence) * 探索範囲(log指定ならlog空間)。
+    """
+    params: dict[str, object] = {}
+    for name, p in params_spec.items():
+        prior = p.get("prior")
+        if not prior:
+            params[name] = sample_random({name: p}, rng)[name]
+            continue
+        conf = float(prior.get("confidence", 0.5))
+        center = prior["center"]
+        if p["type"] == "cat":
+            params[name] = center if rng.random() < conf else rng.choice(p["choices"])
+        elif p.get("log"):
+            sigma = (1.0 - conf) * (math.log(p["high"]) - math.log(p["low"]))
+            params[name] = clamp_numeric(math.exp(rng.gauss(math.log(center), sigma)), p)
+        else:
+            sigma = (1.0 - conf) * (p["high"] - p["low"])
+            params[name] = clamp_numeric(rng.gauss(float(center), sigma), p)
+    return params
+
+
+def maybe_enqueue_prior(engine, spec: dict, trial_index: int, args, rng: random.Random) -> bool:
+    """πBO と同様に試行が進むほど事前分布の影響を β/(β+t) で減衰させる。"""
+    if not getattr(args, "use_prior", False):
+        return False
+    p_t = args.prior_p0 * args.prior_beta / (args.prior_beta + trial_index)
+    if rng.random() >= p_t:
+        return False
+    engine.enqueue(sample_from_prior(spec["params"], rng))
+    return True
+
+
 class BuiltinEngine:
     """Random search + hill climb around the incumbent. Resume-safe via JSONL."""
 
@@ -118,6 +173,7 @@ class BuiltinEngine:
         self.state_path = state_path
         self.rng = random.Random(seed)
         self.history: list[dict] = []
+        self.queue: list[dict] = []
         self.next_number = 0
         if state_path.exists():
             for line in state_path.read_text(encoding="utf-8").splitlines():
@@ -136,9 +192,14 @@ class BuiltinEngine:
             return None
         return min(scored, key=lambda h: h["score"]) if self.direction == "min" else max(scored, key=lambda h: h["score"])
 
+    def enqueue(self, params: dict) -> None:
+        self.queue.append(params)
+
     def ask(self) -> tuple[int, dict]:
         number = self.next_number
         self.next_number += 1
+        if self.queue:
+            return number, self.queue.pop(0)
         best = self.best()
         if best is None or len(self.history) < 8 or self.rng.random() < 0.4:
             params = sample_random(self.params_spec, self.rng)
@@ -200,6 +261,9 @@ class OptunaEngine:
         except ValueError:
             return None
         return {"number": trial.number, "params": trial.params, "score": trial.value}
+
+    def enqueue(self, params: dict) -> None:
+        self.study.enqueue_trial(params)
 
     def ask(self) -> tuple[object, dict]:
         trial = self.study.ask()
@@ -319,6 +383,7 @@ def write_bridge_status(root: Path, spec_name: str, engine_name: str, done: int,
 
 def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict | None:
     in_flight: dict[str, dict] = {}
+    prior_rng = random.Random(args.seed)
     done = 0
     stop = root / "control" / "stop_all"
 
@@ -328,6 +393,7 @@ def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict |
             break
 
         while len(in_flight) < args.parallel and done + len(in_flight) < args.max_trials:
+            maybe_enqueue_prior(engine, spec, done + len(in_flight), args, prior_rng)
             ref, params = engine.ask()
             number = ref.number if hasattr(ref, "number") else ref
             tag = f"{spec['name']}-t{int(number):04d}"
@@ -395,12 +461,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=None, help="rng seed for the sampler")
     parser.add_argument("--tpe-profile", choices=["recommended", "default"], default="recommended",
                         help="TPE設定: recommended=multivariate+constant_liar (arXiv:2304.11127), default=Optuna既定値")
+    parser.add_argument("--no-prior", action="store_true", help="specの prior 指定を無視する")
+    parser.add_argument("--prior-p0", type=float, default=0.9, help="初回trialで事前分布から引く確率")
+    parser.add_argument("--prior-beta", type=float, default=None, help="減衰スケール (default: max_trials/4)")
     args = parser.parse_args(argv)
 
     args.root = args.root.resolve()
     spec = load_spec(args.spec)
     if args.trial_timeout_sec is None:
         args.trial_timeout_sec = float(spec["timeout_sec"]) * 3 + 300
+
+    if args.prior_beta is None:
+        args.prior_beta = max(1.0, args.max_trials / 4)
+    args.use_prior = spec_has_prior(spec) and not args.no_prior
 
     engine, engine_name = make_engine(spec, args)
     print(f"search '{spec['name']}': engine={engine_name} params={list(spec['params'])} instances={len(spec['instances'])}")
