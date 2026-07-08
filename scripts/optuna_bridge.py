@@ -217,6 +217,110 @@ def make_engine(spec: dict, args) -> tuple[object, str]:
 
 
 # ---------------------------------------------------------------------------
+# successive halving (seed数を忠実度とみなす逐次淘汰; Awad et al. IJCAI 2021 DEHB と同原理)
+
+
+def halving_rungs(n_instances: int, eta: int) -> list[int]:
+    rungs = {n_instances}
+    c = n_instances
+    while c > 1:
+        c = math.ceil(c / eta)
+        rungs.add(c)
+    return sorted(rungs)
+
+
+class HalvingScheduler:
+    """低忠実度(少seed)で多数候補を評価し、上位 1/eta のみ次rung(多seed)へ昇格させる。
+
+    昇格候補の既評価seed結果は emit_trial_jobs の resume 機構で再利用される。
+    engine には全候補の(部分忠実度を含む)スコアを tell するが、
+    「best」はスケジューラ自身が全seed評価済み候補のみから追跡する。
+    """
+
+    def __init__(self, engine, n_instances: int, eta: int, direction: str):
+        self.engine = engine
+        self.eta = eta
+        self.rungs = halving_rungs(n_instances, eta)
+        self.bracket_size = eta ** (len(self.rungs) - 1)
+        self.maximize = direction == "max"
+        self.best: dict | None = None
+
+    def run_bracket(self, evaluate_rung) -> int:
+        """evaluate_rung(cands, n_seeds) -> list[score|None]。1ブラケット実行し候補数を返す。"""
+        cands = [self.engine.ask() for _ in range(self.bracket_size)]
+        scores: list = [None] * len(cands)
+        alive = list(range(len(cands)))
+        for depth, n_seeds in enumerate(self.rungs):
+            rung_scores = evaluate_rung([cands[i] for i in alive], n_seeds)
+            ok = []
+            for i, sc in zip(alive, rung_scores):
+                scores[i] = sc
+                if sc is not None:
+                    ok.append(i)
+            if depth == len(self.rungs) - 1:
+                for i in ok:
+                    if self.best is None or (scores[i] > self.best["score"]) == self.maximize:
+                        ref = cands[i][0]
+                        number = ref.number if hasattr(ref, "number") else ref
+                        self.best = {"number": number, "params": cands[i][1], "score": scores[i]}
+                break
+            keep = max(1, math.ceil(len(ok) / self.eta))
+            alive = sorted(ok, key=lambda i: scores[i], reverse=self.maximize)[:keep]
+            if not alive:
+                break
+        for (ref, params), score in zip(cands, scores):
+            self.engine.tell(ref, params, score)
+        return len(cands)
+
+
+def run_search_halving(root: Path, spec: dict, engine, engine_name: str, args) -> dict | None:
+    sched = HalvingScheduler(engine, len(spec["instances"]), args.eta, args.direction)
+    stop = root / "control" / "stop_all"
+    done = 0
+
+    def evaluate_rung(cands, n_seeds):
+        sub = dict(spec)
+        sub["instances"] = spec["instances"][:n_seeds]
+        states = []
+        for ref, params in cands:
+            number = ref.number if hasattr(ref, "number") else ref
+            tag = f"{spec['name']}-t{int(number):04d}"
+            states.append(emit_trial_jobs(root, sub, tag, params))
+        deadline = time.time() + args.trial_timeout_sec
+        while True:
+            outcomes = [collect_scores(root, ids) for ids in states]
+            if all(missing == 0 for _, _, missing in outcomes) or time.time() > deadline or stop.exists():
+                break
+            time.sleep(args.poll_sec)
+        results = []
+        for job_ids, (scores, failed, missing) in zip(states, outcomes):
+            if failed or missing or len(scores) < len(job_ids):
+                results.append(None)
+            else:
+                results.append(aggregate(scores, args.agg))
+        return results
+
+    while done < args.max_trials and not stop.exists():
+        done += sched.run_bracket(evaluate_rung)
+        write_bridge_status(root, spec["name"], engine_name + "+halving", done, 0, sched.best)
+        if sched.best is not None:
+            atomic_write_json(
+                root / "state" / "search" / f"{spec['name']}.best.json",
+                {
+                    "engine": engine_name + "+halving",
+                    "agg": args.agg,
+                    "direction": args.direction,
+                    "trial_number": sched.best["number"],
+                    "params": sched.best["params"],
+                    "score": sched.best["score"],
+                    "updated_at": now_iso(),
+                },
+            )
+        print(f"[{now_iso()}] bracket done: candidates={done} best={sched.best['score'] if sched.best else None}")
+    return sched.best
+
+
+# ---------------------------------------------------------------------------
 # cluster interaction
 
 
@@ -376,6 +480,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--poll-sec", type=float, default=5.0)
     parser.add_argument("--trial-timeout-sec", type=float, default=None, help="default: job timeout*3 + 300")
     parser.add_argument("--seed", type=int, default=None, help="rng seed for builtin engine")
+    parser.add_argument("--halving", action="store_true",
+                        help="successive halving: 少seedで粗選抜し上位のみ全seed評価 (DEHB, IJCAI 2021 の忠実度昇格)")
+    parser.add_argument("--eta", type=int, default=3, help="halving promotion ratio")
     args = parser.parse_args(argv)
 
     args.root = args.root.resolve()
@@ -386,7 +493,8 @@ def main(argv: list[str] | None = None) -> int:
     engine, engine_name = make_engine(spec, args)
     print(f"search '{spec['name']}': engine={engine_name} params={list(spec['params'])} instances={len(spec['instances'])}")
 
-    best = run_search(args.root, spec, engine, engine_name, args)
+    runner = run_search_halving if args.halving else run_search
+    best = runner(args.root, spec, engine, engine_name, args)
     if best is None:
         print("no successful trial")
         return 1
