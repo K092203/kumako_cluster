@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  # メイン: Optuna を入れて TPE 経路まで含む全テストを回す。
+  # Python は最低要件 3.9(_pyversion.py の MINIMUM)と近年版 3.12 のマトリクス。
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install deps (pytest + optuna)
+        run: python -m pip install --upgrade pip pytest optuna
+      - name: Run tests
+        run: python -m pytest tests -q
+
+  # フォールバック経路の担保: Optuna を入れず標準ライブラリのみで動くことを検証する。
+  # optuna smoke テストは importorskip で自動スキップされる。
+  pytest-stdlib-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps (pytest only)
+        run: python -m pip install --upgrade pip pytest
+      - name: Run tests (no optuna)
+        run: python -m pytest tests -q
