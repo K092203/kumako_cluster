@@ -203,6 +203,9 @@ engine.ask() → params
 engine.tell(ref, params, value)   ※失敗トライアルは FAIL
 ```
 
+結果検出は `jobs/done` / `jobs/failed` の走査とキャッシュを使い、SMB 上での
+`results/*/<job>/result.json` 探索を新規完了ジョブに絞る。
+
 - **in-flight 制限** `--parallel`(既定32): 同時進行トライアル数の上限。TPE は逐次性が
   あり高並列で質が落ちるため32程度に抑える
 - **TPE設定** `--tpe-profile`(既定 `recommended`): `multivariate`(パラメータ間相関を
@@ -211,6 +214,9 @@ engine.tell(ref, params, value)   ※失敗トライアルは FAIL
 - **事前分布注入** spec の param に `prior: {center, confidence}` を書くと、πBO(ICLR 2022)
   方式で β/(β+t) 減衰する確率で事前分布から初期試行を引く。`--no-prior` で無効化。
   誤った prior でも試行が進めば回復する(opt-in。書かなければ従来動作)
+- **ウォームスタート** `--warm-start-from` で過去の `.best.json` または `.history.jsonl`
+  を読み、現 spec に合う上位候補を `--warm-start-top-k` 件まで先頭に enqueue する
+  (opt-in。範囲外の数値はクリップし、存在しないカテゴリは捨てる)
 - **エンジン2種**:
   - Optuna(あれば): TPE + `JournalStorage`(`state/search/<name>.journal.log`、
     DBサーバ不要・再開可能)。optuna 3系/4系の import 差を吸収

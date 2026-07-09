@@ -202,6 +202,9 @@ python scripts\optuna_bridge.py --spec examples\mock_problem\search_spec.json ^
   従来動作に戻すなら `--tpe-profile default`
 - 事前知識(「このパラメータはこの辺が良い」)があれば spec の各 param に
   `prior` を書くと序盤の探索が加速する(下記スペック参照。opt-in)
+- 前夜の探索結果を使うなら `--warm-start-from state/search/<name>.best.json` または
+  `--warm-start-from state/search/<name>.history.jsonl` を指定する。履歴は
+  `--warm-start-top-k` 件までスコア順に enqueue する(opt-in)
 - Optuna 未導入なら `--engine builtin`(ランダム+山登り、標準ライブラリのみ)
 - Ctrl+C や `control/stop_all` で安全停止。再実行で途中から再開(結果は再利用)
 - 進捗は `status/bridge-<name>.json`、最良は `state/search/<name>.best.json`

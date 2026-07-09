@@ -1,0 +1,102 @@
+{
+ "description": "result polling benchmark: current find_result per job vs done/failed indexed cache",
+ "polls": 50,
+ "operation_counts": [
+  "os.scandir",
+  "os.stat",
+  "os.lstat",
+  "os.open"
+ ],
+ "cases": [
+  {
+   "old_results": 500,
+   "polls": 50,
+   "in_flight": 480,
+   "in_flight_done": 80,
+   "in_flight_missing": 400,
+   "found_each_poll": 80,
+   "current": {
+    "avg_ops_per_poll": 9880.0,
+    "avg_ops_per_poll_by_name": {
+     "scandir": 9400.0,
+     "stat": 480.0,
+     "lstat": 0.0,
+     "open": 0.0
+    },
+    "avg_wall_ms_per_poll": 120.69496003998665,
+    "total_ops": 494000.0,
+    "total_ops_by_name": {
+     "scandir": 470000,
+     "stat": 24000,
+     "lstat": 0,
+     "open": 0
+    },
+    "total_wall_ms": 6034.748001999333
+   },
+   "indexed": {
+    "avg_ops_per_poll": 23.6,
+    "avg_ops_per_poll_by_name": {
+     "scandir": 22.0,
+     "stat": 1.6,
+     "lstat": 0.0,
+     "open": 0.0
+    },
+    "avg_wall_ms_per_poll": 0.49149332000524737,
+    "total_ops": 1180.0,
+    "total_ops_by_name": {
+     "scandir": 1100,
+     "stat": 80,
+     "lstat": 0,
+     "open": 0
+    },
+    "total_wall_ms": 24.57466600026237
+   },
+   "ratio_current_ops_over_indexed_ops": 418.64406779661016
+  },
+  {
+   "old_results": 3000,
+   "polls": 50,
+   "in_flight": 480,
+   "in_flight_done": 80,
+   "in_flight_missing": 400,
+   "found_each_poll": 80,
+   "current": {
+    "avg_ops_per_poll": 9880.0,
+    "avg_ops_per_poll_by_name": {
+     "scandir": 9400.0,
+     "stat": 480.0,
+     "lstat": 0.0,
+     "open": 0.0
+    },
+    "avg_wall_ms_per_poll": 440.7188238799927,
+    "total_ops": 494000.0,
+    "total_ops_by_name": {
+     "scandir": 470000,
+     "stat": 24000,
+     "lstat": 0,
+     "open": 0
+    },
+    "total_wall_ms": 22035.941193999635
+   },
+   "indexed": {
+    "avg_ops_per_poll": 23.6,
+    "avg_ops_per_poll_by_name": {
+     "scandir": 22.0,
+     "stat": 1.6,
+     "lstat": 0.0,
+     "open": 0.0
+    },
+    "avg_wall_ms_per_poll": 2.438605319994167,
+    "total_ops": 1180.0,
+    "total_ops_by_name": {
+     "scandir": 1100,
+     "stat": 80,
+     "lstat": 0,
+     "open": 0
+    },
+    "total_wall_ms": 121.93026599970835
+   },
+   "ratio_current_ops_over_indexed_ops": 418.64406779661016
+  }
+ ]
+}

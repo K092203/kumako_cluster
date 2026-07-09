@@ -121,6 +121,41 @@ def test_emit_and_collect_trial_jobs(root: Path) -> None:
     assert len(list((root / "jobs" / "pending").glob("*.json"))) == 1
 
 
+def test_result_index_polls_done_failed_and_retries_missing(root: Path) -> None:
+    job_id = "s1-t0000-i0001"
+    index = bridge.ResultIndex(root)
+    (root / "jobs" / "done" / f"{job_id}.json").write_text(json.dumps({"job_id": job_id}))
+    result_dir = root / "results" / "w1" / job_id
+    result_dir.mkdir(parents=True)
+    result = {"outcome": "completed", "measure": {"score": 1.5, "correct": True}}
+    (result_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+
+    index.poll({job_id})
+    assert index.get(job_id) == result
+
+    renamed_id = "s1-t0000-i0002"
+    (root / "jobs" / "done" / f"{renamed_id}-2.json").write_text(json.dumps({"job_id": renamed_id}))
+    result_dir = root / "results" / "w1" / renamed_id
+    result_dir.mkdir(parents=True)
+    renamed_result = {"outcome": "completed", "measure": {"score": 2.0, "correct": True}}
+    (result_dir / "result.json").write_text(json.dumps(renamed_result), encoding="utf-8")
+
+    index.poll({renamed_id})
+    assert index.get(renamed_id) == renamed_result
+
+    late_id = "s1-t0000-i0003"
+    (root / "jobs" / "failed" / f"{late_id}.json").write_text(json.dumps({"job_id": late_id}))
+    index.poll({late_id})
+    assert index.get(late_id) is None
+
+    result_dir = root / "results" / "w2" / late_id
+    result_dir.mkdir(parents=True)
+    late_result = {"outcome": "failed", "measure": {"score": None, "correct": None}}
+    (result_dir / "result.json").write_text(json.dumps(late_result), encoding="utf-8")
+    index.poll({late_id})
+    assert index.get(late_id) == late_result
+
+
 def test_run_search_loop_with_fake_results(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = dict(SPEC, instances=[1])
     engine = bridge.BuiltinEngine(spec, "max", root / "state" / "search" / "s1.history.jsonl", seed=7)
@@ -141,6 +176,7 @@ def test_run_search_loop_with_fake_results(root: Path, monkeypatch: pytest.Monke
                     }
                 )
             )
+            (r / "jobs" / "done" / f"{job_id}.json").write_text(json.dumps({"job_id": job_id}))
         return job_ids
 
     monkeypatch.setattr(bridge, "emit_trial_jobs", emit_and_answer)
@@ -155,6 +191,41 @@ def test_run_search_loop_with_fake_results(root: Path, monkeypatch: pytest.Monke
     assert best["score"] <= 0
     best_file = json.loads((root / "state" / "search" / "s1.best.json").read_text())
     assert best_file["params"] == best["params"]
+
+
+def test_warm_start_history_and_best_enqueue(tmp_path: Path) -> None:
+    spec = {
+        "name": "ws",
+        "params": {
+            "alpha": {"type": "float", "low": 0.0, "high": 1.0},
+            "iters": {"type": "int", "low": 1, "high": 100},
+            "strategy": {"type": "cat", "choices": ["a", "b"]},
+        },
+    }
+    history = tmp_path / "old.history.jsonl"
+    rows = [
+        {"number": 0, "params": {"alpha": 0.2, "iters": 10, "strategy": "a"}, "score": 1.0},
+        {"number": 1, "params": {"alpha": 2.0, "iters": 150, "strategy": "b"}, "score": 10.0},
+        {"number": 2, "params": {"alpha": 0.4, "iters": 20, "strategy": "a"}, "score": 8.0},
+        {"number": 3, "params": {"alpha": 0.5, "iters": 30, "strategy": "x"}, "score": 99.0},
+        {"number": 4, "params": {"alpha": 0.6, "iters": 40, "strategy": "a"}, "score": None},
+    ]
+    history.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    engine = bridge.BuiltinEngine(spec, "max", tmp_path / "hist.jsonl", seed=1)
+    queued = bridge.enqueue_warm_starts(engine, spec, [history], 2, "max")
+    assert queued == 2
+    assert engine.queue == [
+        {"alpha": 1.0, "iters": 100, "strategy": "b"},
+        {"alpha": 0.4, "iters": 20, "strategy": "a"},
+    ]
+
+    best = tmp_path / "old.best.json"
+    best.write_text(json.dumps({"params": {"alpha": -1.0, "iters": 3.2, "strategy": "a"}}), encoding="utf-8")
+    engine = bridge.BuiltinEngine(spec, "max", tmp_path / "hist2.jsonl", seed=1)
+    queued = bridge.enqueue_warm_starts(engine, spec, [best], 5, "max")
+    assert queued == 1
+    assert engine.queue == [{"alpha": 0.0, "iters": 3, "strategy": "a"}]
 
 
 def test_optuna_engine_smoke(tmp_path: Path) -> None:

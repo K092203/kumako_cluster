@@ -19,6 +19,7 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Optional
 
 
 def now_iso() -> str:
@@ -162,6 +163,75 @@ def maybe_enqueue_prior(engine, spec: dict, trial_index: int, args, rng: random.
         return False
     engine.enqueue(sample_from_prior(spec["params"], rng))
     return True
+
+
+def normalize_warm_start_params(params: dict, params_spec: dict) -> Optional[dict]:
+    normalized = {}
+    for name, p in params_spec.items():
+        if name not in params:
+            return None
+        value = params[name]
+        if p["type"] == "cat":
+            if value not in p["choices"]:
+                return None
+            normalized[name] = value
+            continue
+        try:
+            normalized[name] = clamp_numeric(float(value), p)
+        except (TypeError, ValueError):
+            return None
+    return normalized
+
+
+def warm_start_key(params: dict) -> str:
+    return json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def load_warm_start_candidates(path: Path, direction: str, top_k: int) -> List[dict]:
+    if not path.exists():
+        raise SystemExit(f"warm-start source not found: {path}")
+    try:
+        if path.suffix == ".jsonl":
+            rows = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("score") is None:
+                    continue
+                if isinstance(row.get("params"), dict):
+                    rows.append(row)
+            reverse = direction == "max"
+            rows.sort(key=lambda row: row["score"], reverse=reverse)
+            return [row["params"] for row in rows]
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SystemExit(f"failed to read warm-start source {path}: {exc}")
+    if not isinstance(data, dict):
+        raise SystemExit(f"warm-start source must contain an object: {path}")
+    params = data.get("params", data)
+    if not isinstance(params, dict):
+        raise SystemExit(f"warm-start source has no params object: {path}")
+    return [params]
+
+
+def enqueue_warm_starts(engine, spec: dict, paths: List[Path], top_k: int, direction: str) -> int:
+    queued = 0
+    seen = set()
+    for path in paths:
+        for params in load_warm_start_candidates(path, direction, top_k):
+            normalized = normalize_warm_start_params(params, spec["params"])
+            if normalized is None:
+                continue
+            key = warm_start_key(normalized)
+            if key in seen:
+                continue
+            engine.enqueue(normalized)
+            seen.add(key)
+            queued += 1
+            if queued >= top_k:
+                return queued
+    return queued
 
 
 class BuiltinEngine:
@@ -338,12 +408,51 @@ def find_result(root: Path, job_id: str) -> dict | None:
     return None
 
 
-def collect_scores(root: Path, job_ids: list[str]) -> tuple[list[float], int, int]:
+class ResultIndex:
+    def __init__(self, root: Path):
+        self.root = root
+        self.cache = {}
+        self.seen_done = set()
+        self.seen_failed = set()
+
+    def _match_job_id(self, stem: str, wanted: set) -> Optional[str]:
+        if stem in wanted:
+            return stem
+        head, sep, tail = stem.rpartition("-")
+        if sep and tail.isdigit() and head in wanted:
+            return head
+        return None
+
+    def poll(self, wanted: set) -> None:
+        for bucket, seen in (("done", self.seen_done), ("failed", self.seen_failed)):
+            directory = self.root / "jobs" / bucket
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if not entry.name.endswith(".json") or entry.name in seen:
+                            continue
+                        job_id = self._match_job_id(entry.name[:-5], wanted)
+                        if job_id is None:
+                            continue
+                        if job_id not in self.cache:
+                            result = find_result(self.root, job_id)
+                            if result is None:
+                                continue
+                            self.cache[job_id] = result
+                        seen.add(entry.name)
+            except FileNotFoundError:
+                continue
+
+    def get(self, job_id: str) -> Optional[dict]:
+        return self.cache.get(job_id)
+
+
+def collect_scores(root: Path, job_ids: list[str], index=None) -> tuple[list[float], int, int]:
     scores: list[float] = []
     failed = 0
     missing = 0
     for job_id in job_ids:
-        result = find_result(root, job_id)
+        result = index.get(job_id) if index is not None else find_result(root, job_id)
         if result is None:
             missing += 1
             continue
@@ -383,6 +492,7 @@ def write_bridge_status(root: Path, spec_name: str, engine_name: str, done: int,
 
 def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict | None:
     in_flight: dict[str, dict] = {}
+    result_index = ResultIndex(root)
     prior_rng = random.Random(args.seed)
     done = 0
     stop = root / "control" / "stop_all"
@@ -405,11 +515,25 @@ def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict |
                 "deadline": time.time() + args.trial_timeout_sec,
             }
 
+        wanted = set()
+        for state in in_flight.values():
+            wanted.update(state["job_ids"])
+        result_index.poll(wanted)
+
         for tag in list(in_flight):
             state = in_flight[tag]
-            scores, failed, missing = collect_scores(root, state["job_ids"])
+            scores, failed, missing = collect_scores(root, state["job_ids"], result_index)
             finished = missing == 0
-            expired = time.time() > state["deadline"]
+            now = time.time()
+            if missing and now > state["deadline"]:
+                for job_id in state["job_ids"]:
+                    if result_index.get(job_id) is None:
+                        result = find_result(root, job_id)
+                        if result is not None:
+                            result_index.cache[job_id] = result
+                scores, failed, missing = collect_scores(root, state["job_ids"], result_index)
+                finished = missing == 0
+            expired = now > state["deadline"]
             if not finished and not failed and not expired:
                 continue
             if failed or expired or len(scores) < len(state["job_ids"]):
@@ -464,6 +588,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-prior", action="store_true", help="specの prior 指定を無視する")
     parser.add_argument("--prior-p0", type=float, default=0.9, help="初回trialで事前分布から引く確率")
     parser.add_argument("--prior-beta", type=float, default=None, help="減衰スケール (default: max_trials/4)")
+    parser.add_argument("--warm-start-from", type=Path, action="append", default=[],
+                        help="過去の state/search/*.best.json または *.history.jsonl から初期候補をenqueue")
+    parser.add_argument("--warm-start-top-k", type=int, default=5,
+                        help="history.jsonl から読み込む上位候補数")
     args = parser.parse_args(argv)
 
     args.root = args.root.resolve()
@@ -476,6 +604,11 @@ def main(argv: list[str] | None = None) -> int:
     args.use_prior = spec_has_prior(spec) and not args.no_prior
 
     engine, engine_name = make_engine(spec, args)
+    if args.warm_start_top_k < 1:
+        raise SystemExit("--warm-start-top-k must be >= 1")
+    if args.warm_start_from:
+        queued = enqueue_warm_starts(engine, spec, args.warm_start_from, args.warm_start_top_k, args.direction)
+        print(f"warm-start: {queued}件 enqueue した")
     print(f"search '{spec['name']}': engine={engine_name} params={list(spec['params'])} instances={len(spec['instances'])}")
 
     best = run_search(args.root, spec, engine, engine_name, args)
