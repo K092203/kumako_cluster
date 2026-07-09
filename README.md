@@ -102,7 +102,15 @@ start_worker_supervisor.bat 14        rem このPCで14スロットを起動・�
 [docs/validation_report_2026-07.md](docs/validation_report_2026-07.md))。
 
 ```bat
-python scripts\supervise_slots.py --slots 14 --adapt --min-slots 2 --max-slots 14
+start_worker_supervisor.bat 14 adapt   rem このPCで14スロット + 自動増減
+rem または直接: python scripts\supervise_slots.py --slots 14 --adapt --min-slots 2 --max-slots 14
+```
+
+親機から全PCへ一斉に指示する場合も第2引数に `adapt` を付けるだけで、各launcherが
+supervisor を `--adapt` 付きで起動します。
+
+```bat
+start_all_slots.bat 14 adapt           rem 親機: 全launcherへ「14スロット + 自動増減」を指示
 ```
 
 親機から全PCへまとめて開始命令を出す場合(各PCで `start_launcher_agent.bat` を

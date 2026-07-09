@@ -15,3 +15,6 @@ jobs/pending/
 repo_snapshot/
 tools/*
 !tools/README.md
+
+# 実験ログ(証跡はresults_*.jsonとvalidate_*.pyに残す。生ログは追跡しない)
+experiments/*.log

@@ -46,6 +46,36 @@ def register(root: Path, local_base: Path, max_workers: int) -> str:
     return completed.stdout.strip().splitlines()[-1]
 
 
+def build_supervisor_cmd(root: Path, req: dict, max_workers: int, local_base: Path) -> list[str]:
+    """control JSON から supervise_slots.py の起動コマンドを組む。
+
+    req が adapt=true を含むと --adapt と(指定があれば)min/max/interval を透過する。
+    """
+    slots = int(req.get("slots", 14))
+    cmd = [
+        sys.executable,
+        str(root / "scripts" / "supervise_slots.py"),
+        "--root", str(root),
+        "--slots", str(slots),
+        "--max-workers", str(max_workers),
+        "--local-base", str(local_base),
+    ]
+    if req.get("adapt"):
+        cmd.append("--adapt")
+        for key, flag in (("min_slots", "--min-slots"),
+                          ("max_slots", "--max-slots"),
+                          ("adapt_interval_sec", "--adapt-interval-sec")):
+            if req.get(key) is not None:
+                cmd += [flag, str(req[key])]
+    return cmd
+
+
+def request_signature(req: dict) -> str:
+    """slots/adapt 等が変わったら再起動判定できるよう、要求内容の署名を作る。"""
+    keys = ("_path", "slots", "adapt", "min_slots", "max_slots", "adapt_interval_sec")
+    return json.dumps({k: req.get(k) for k in keys}, sort_keys=True)
+
+
 def read_start_request(root: Path, base_worker_id: str) -> dict | None:
     control = root / "control"
     candidates = [control / f"{base_worker_id}.start_slots.json", control / "start_slots_all.json"]
@@ -72,7 +102,7 @@ def main() -> int:
     base_worker_id = register(root, args.local_base, args.max_workers)
     status_path = root / "status" / f"{base_worker_id}-launcher.json"
     supervisor: subprocess.Popen | None = None
-    last_request_path = ""
+    last_request_sig = ""
 
     print(f"{base_worker_id}: launcher agent ready")
     while True:
@@ -93,26 +123,15 @@ def main() -> int:
 
         req = read_start_request(root, base_worker_id)
         if req is not None:
-            slots = int(req.get("slots", 14))
-            req_path = str(req.get("_path", ""))
-            if supervisor is None or supervisor.poll() is not None or req_path != last_request_path:
+            # 内容が変わったら再起動する(同じファイルの上書きでも slots/adapt 変更を反映)
+            req_sig = request_signature(req)
+            if supervisor is None or supervisor.poll() is not None or req_sig != last_request_sig:
                 if supervisor is not None and supervisor.poll() is None:
                     supervisor.terminate()
                     time.sleep(1)
-                cmd = [
-                    sys.executable,
-                    str(root / "scripts" / "supervise_slots.py"),
-                    "--root",
-                    str(root),
-                    "--slots",
-                    str(slots),
-                    "--max-workers",
-                    str(args.max_workers),
-                    "--local-base",
-                    str(args.local_base),
-                ]
+                cmd = build_supervisor_cmd(root, req, args.max_workers, args.local_base)
                 supervisor = subprocess.Popen(cmd)
-                last_request_path = req_path
+                last_request_sig = req_sig
 
         atomic_write_json(
             status_path,
