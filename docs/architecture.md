@@ -217,6 +217,19 @@ engine.tell(ref, params, value)   ※失敗トライアルは FAIL
 - **ウォームスタート** `--warm-start-from` で過去の `.best.json` または `.history.jsonl`
   を読み、現 spec に合う上位候補を `--warm-start-top-k` 件まで先頭に enqueue する
   (opt-in。範囲外の数値はクリップし、存在しないカテゴリは捨てる)
+- **Wilcoxonレーシング** `--race` は Optuna 3.6/2024 系の `WilcoxonPruner` と同じ
+  考え方を標準ライブラリだけで実装した opt-in。trial ごとに `random.Random("race:"+tag)`
+  で決めた seed 順の先頭 `ceil(n/3)` 以上を1波目として投入し、現職より明白に悪い候補だけ
+  片側Pratt Wilcoxonで枝刈りする。生存者は必ず全seedを評価するため `--agg min` は許可し、
+  `--agg max` では検定方向と選抜基準が合わないので警告して無効化する。既定 p=0.05 の枝刈りは
+  1波目が5対以上ないと数学的に発火しない(片側の最小pは n'=4 で 0.0625)。自動の1波
+  `ceil(n/3)` でこれを満たすのはインスタンス13個以上のとき。6〜12個なら `--race-startup 5`
+  を検討。5個以下では自然に no-op(第1弾で悪化した successive halving と違い安全に退化する)。
+- **straggler hedging** `--hedge` は Tail at Scale 系の遅延対策。残り未着が少数になり、
+  trial内の完了時間中央値から見て十分遅い job だけ `job_id-h1` として1回複製し、元結果が
+  なければ複製結果を採用する。複製数/投入数が `--hedge-max-frac` を超えたら以後停止する
+  ブレーカを持つ。負けた側の結果も `done/` と `results/` に残るため、`summarize --by-sweep`
+  の生ジョブ集計には複製が混ざりうる。
 - **エンジン2種**:
   - Optuna(あれば): TPE + `JournalStorage`(`state/search/<name>.journal.log`、
     DBサーバ不要・再開可能)。optuna 3系/4系の import 差を吸収

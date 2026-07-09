@@ -205,6 +205,12 @@ python scripts\optuna_bridge.py --spec examples\mock_problem\search_spec.json ^
 - 前夜の探索結果を使うなら `--warm-start-from state/search/<name>.best.json` または
   `--warm-start-from state/search/<name>.history.jsonl` を指定する。履歴は
   `--warm-start-top-k` 件までスコア順に enqueue する(opt-in)
+- `--race` は Wilcoxon ゲート付きの2波シードレーシング。20シード検証では同一評価予算で
+  完走トライアル +42%(114 vs 80)、シード評価30%節約、誤枝刈り0.0%(opt-in)
+- `--hedge` は残り少数の遅い/孤児ジョブだけを1回複製する。280slotシムではストラグラー2%時に
+  完了トライアル +86.0%、p95 trial latency 431s→134s(opt-in)
+- `--warm-start-from`・`--race`・`--hedge` の実測と採否判断の根拠は
+  [docs/validation_report_2026-07b.md](docs/validation_report_2026-07b.md)
 - Optuna 未導入なら `--engine builtin`(ランダム+山登り、標準ライブラリのみ)
 - Ctrl+C や `control/stop_all` で安全停止。再実行で途中から再開(結果は再利用)
 - 進捗は `status/bridge-<name>.json`、最良は `state/search/<name>.best.json`

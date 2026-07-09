@@ -187,6 +187,59 @@ def warm_start_key(params: dict) -> str:
     return json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def signed_rank_p_worse(diffs):
+    """One-sided Pratt Wilcoxon signed-rank p-value for challenger < incumbent.
+
+    diffs are challenger_score - incumbent_score. Small p means the challenger is
+    significantly worse. Standard library only (works with the builtin engine).
+    """
+    vals = [float(d) for d in diffs if math.isfinite(float(d))]
+    if not vals:
+        return 1.0
+
+    ordered = sorted(enumerate(vals), key=lambda item: abs(item[1]))
+    ranks = [0.0] * len(vals)
+    tie_groups = []
+    i = 0
+    while i < len(ordered):
+        j = i + 1
+        a = abs(ordered[i][1])
+        while j < len(ordered) and abs(ordered[j][1]) == a:
+            j += 1
+        rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            ranks[ordered[k][0]] = rank
+        tie_groups.append(j - i)
+        i = j
+
+    nonzero = [(d, ranks[idx]) for idx, d in enumerate(vals) if d != 0.0]
+    m = len(nonzero)
+    if m == 0:
+        return 1.0
+
+    w_plus = sum(rank for d, rank in nonzero if d > 0.0)
+    if m <= 25:
+        rank2 = [int(round(rank * 2.0)) for _, rank in nonzero]
+        obs = int(round(w_plus * 2.0))
+        counts = {0: 1}
+        for r in rank2:
+            nxt = {}
+            for s, c in counts.items():
+                nxt[s] = nxt.get(s, 0) + c
+                sr = s + r
+                nxt[sr] = nxt.get(sr, 0) + c
+            counts = nxt
+        le = sum(c for s, c in counts.items() if s <= obs)
+        return le / float(2 ** m)
+
+    var = m * (m + 1) * (2 * m + 1) / 24.0
+    var -= sum((t ** 3 - t) / 48.0 for t in tie_groups)
+    if var <= 0.0:
+        return 1.0
+    z = (w_plus - m * (m + 1) / 4.0 + 0.5) / math.sqrt(var)
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
 def load_warm_start_candidates(path: Path, direction: str, top_k: int) -> List[dict]:
     if not path.exists():
         raise SystemExit(f"warm-start source not found: {path}")
@@ -371,32 +424,47 @@ def make_engine(spec: dict, args) -> tuple[object, str]:
 # cluster interaction
 
 
-def trial_job_ids(spec: dict, trial_tag: str) -> list[str]:
-    return [f"{trial_tag}-i{int(seed):04d}" for seed in spec["instances"]]
+def trial_job_ids(spec: dict, trial_tag: str, seeds: list[int] | None = None) -> list[str]:
+    selected = spec["instances"] if seeds is None else seeds
+    return [f"{trial_tag}-i{int(seed):04d}" for seed in selected]
 
 
-def emit_trial_jobs(root: Path, spec: dict, trial_tag: str, params: dict) -> list[str]:
+def make_job_payload(spec: dict, trial_tag: str, params: dict, seed: int, job_id: str) -> dict:
+    job = {
+        "job_id": job_id,
+        "seed": int(seed),
+        "timeout_sec": spec["timeout_sec"],
+        "command": spec["command"],
+        "params": params,
+        "sweep_id": trial_tag,
+        "created_at": now_iso(),
+    }
+    for key in ("cwd", "env", "artifacts"):
+        if spec.get(key):
+            job[key] = spec[key]
+    return job
+
+
+def emit_trial_jobs(root: Path, spec: dict, trial_tag: str, params: dict, seeds: list[int] | None = None) -> list[str]:
     pending = root / "jobs" / "pending"
     pending.mkdir(parents=True, exist_ok=True)
     job_ids = []
-    for seed, job_id in zip(spec["instances"], trial_job_ids(spec, trial_tag)):
+    selected = spec["instances"] if seeds is None else seeds
+    for seed, job_id in zip(selected, trial_job_ids(spec, trial_tag, selected)):
         job_ids.append(job_id)
         if find_result(root, job_id) is not None:
             continue  # resume: 結果が既にあるジョブは再投入しない
-        job = {
-            "job_id": job_id,
-            "seed": int(seed),
-            "timeout_sec": spec["timeout_sec"],
-            "command": spec["command"],
-            "params": params,
-            "sweep_id": trial_tag,
-            "created_at": now_iso(),
-        }
-        for key in ("cwd", "env", "artifacts"):
-            if spec.get(key):
-                job[key] = spec[key]
-        atomic_write_json(pending / f"{job_id}.json", job)
+        atomic_write_json(pending / f"{job_id}.json", make_job_payload(spec, trial_tag, params, int(seed), job_id))
     return job_ids
+
+
+def emit_hedge_job(root: Path, spec: dict, trial_tag: str, params: dict, seed: int, original_job_id: str) -> str:
+    hedge_id = original_job_id + "-h1"
+    if find_result(root, hedge_id) is None:
+        pending = root / "jobs" / "pending"
+        pending.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(pending / f"{hedge_id}.json", make_job_payload(spec, trial_tag, params, int(seed), hedge_id))
+    return hedge_id
 
 
 def find_result(root: Path, job_id: str) -> dict | None:
@@ -447,12 +515,24 @@ class ResultIndex:
         return self.cache.get(job_id)
 
 
-def collect_scores(root: Path, job_ids: list[str], index=None) -> tuple[list[float], int, int]:
+def resolve_result(root: Path, job_id: str, index=None, aliases: dict[str, list[str]] | None = None) -> Optional[dict]:
+    result = index.get(job_id) if index is not None else find_result(root, job_id)
+    if result is not None:
+        return result
+    for alias in (aliases or {}).get(job_id, []):
+        result = index.get(alias) if index is not None else find_result(root, alias)
+        if result is not None:
+            return result
+    return None
+
+
+def collect_scores(root: Path, job_ids: list[str], index=None,
+                   aliases: dict[str, list[str]] | None = None) -> tuple[list[float], int, int]:
     scores: list[float] = []
     failed = 0
     missing = 0
     for job_id in job_ids:
-        result = index.get(job_id) if index is not None else find_result(root, job_id)
+        result = resolve_result(root, job_id, index, aliases)
         if result is None:
             missing += 1
             continue
@@ -465,12 +545,125 @@ def collect_scores(root: Path, job_ids: list[str], index=None) -> tuple[list[flo
     return scores, failed, missing
 
 
+def collect_seed_scores(root: Path, job_ids: list[str], seed_by_job: dict[str, int], index=None,
+                        aliases: dict[str, list[str]] | None = None) -> tuple[dict[int, float], int, int]:
+    scores: dict[int, float] = {}
+    failed = 0
+    missing = 0
+    for job_id in job_ids:
+        result = resolve_result(root, job_id, index, aliases)
+        if result is None:
+            missing += 1
+            continue
+        measure = result.get("measure") or {}
+        score = measure.get("score")
+        if result.get("outcome") == "completed" and measure.get("correct") is not False and score is not None:
+            scores[seed_by_job[job_id]] = float(score)
+        else:
+            failed += 1
+    return scores, failed, missing
+
+
 def aggregate(scores: list[float], agg: str) -> float:
     if agg == "min":
         return min(scores)
     if agg == "max":
         return max(scores)
     return sum(scores) / len(scores)
+
+
+def is_better(value: float, incumbent: float, direction: str) -> bool:
+    return value < incumbent if direction == "min" else value > incumbent
+
+
+def is_worse(value: float, incumbent: float, direction: str) -> bool:
+    return value > incumbent if direction == "min" else value < incumbent
+
+
+def deterministic_race_order(instances: list[int], tag: str) -> list[int]:
+    order = [int(seed) for seed in instances]
+    random.Random("race:" + tag).shuffle(order)
+    return order
+
+
+def median(values: list[float]) -> float:
+    xs = sorted(values)
+    mid = len(xs) // 2
+    if len(xs) % 2:
+        return xs[mid]
+    return (xs[mid - 1] + xs[mid]) / 2.0
+
+
+def should_hedge_job(elapsed: float, samples: list[float], factor: float, min_wait_sec: float) -> bool:
+    if len(samples) < 3:
+        return False
+    return elapsed > factor * median(samples) + min_wait_sec
+
+
+def hedge_missing_jobs(root: Path, spec: dict, tag: str, state: dict, args, now: float, hedge_stats: dict) -> None:
+    if not getattr(args, "hedge", False) or state.get("told"):
+        return
+    if hedge_stats.get("disabled"):
+        return
+    submitted = state["submitted_job_ids"]
+    if not submitted:
+        return
+    missing = [job_id for job_id in submitted if job_id not in state["resolved_jobs"]]
+    if not missing:
+        return
+    if len(missing) > math.ceil(float(args.hedge_remaining_frac) * len(submitted)):
+        return
+    if len(state["durations"]) < 3:
+        return
+    if hedge_stats["duplicates"] / max(1, hedge_stats["submitted"]) > float(args.hedge_max_frac):
+        hedge_stats["disabled"] = True
+        if not hedge_stats.get("notified"):
+            print(f"hedge disabled: duplicate ratio exceeded {args.hedge_max_frac:g}")
+            hedge_stats["notified"] = True
+        return
+
+    for job_id in missing:
+        if job_id in state["hedged_jobs"]:
+            continue
+        start = state["job_started_at"].get(job_id)
+        if start is None:
+            continue
+        if not should_hedge_job(now - start, state["durations"], float(args.hedge_factor), float(args.hedge_min_wait_sec)):
+            continue
+        hedge_id = emit_hedge_job(root, spec, tag, state["params"], state["seed_by_job"][job_id], job_id)
+        state["aliases"].setdefault(job_id, []).append(hedge_id)
+        state["alias_to_original"][hedge_id] = job_id
+        state["hedged_jobs"].add(job_id)
+        state["job_started_at"][hedge_id] = now
+        state["session_jobs"].add(hedge_id)
+        hedge_stats["duplicates"] += 1
+        hedge_stats["submitted"] += 1
+        if hedge_stats["duplicates"] / max(1, hedge_stats["submitted"]) > float(args.hedge_max_frac):
+            hedge_stats["disabled"] = True
+            if not hedge_stats.get("notified"):
+                print(f"hedge disabled: duplicate ratio exceeded {args.hedge_max_frac:g}")
+                hedge_stats["notified"] = True
+            break
+
+
+def note_resolved_durations(state: dict, result_index: ResultIndex, now: float) -> None:
+    for job_id in list(state["submitted_job_ids"]):
+        if job_id in state["resolved_jobs"]:
+            continue
+        result = result_index.get(job_id)
+        winner_id = job_id
+        if result is None:
+            for alias in state["aliases"].get(job_id, []):
+                result = result_index.get(alias)
+                if result is not None:
+                    winner_id = alias
+                    break
+        if result is None:
+            continue
+        state["resolved_jobs"].add(job_id)
+        start = state["job_started_at"].get(winner_id)
+        if start is not None and winner_id in state["session_jobs"]:
+            state["durations"].append(max(0.0, now - start))
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +689,34 @@ def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict |
     prior_rng = random.Random(args.seed)
     done = 0
     stop = root / "control" / "stop_all"
+    instances = [int(seed) for seed in spec["instances"]]
+    race_enabled = bool(getattr(args, "race", False))
+    if race_enabled and args.agg == "max":
+        print("warning: --agg max is incompatible with --race; disabling racing")
+        race_enabled = False
+    race_min_startup = int(math.ceil(len(instances) / 3.0))
+    configured_startup = int(getattr(args, "race_startup", 0) or race_min_startup)
+    race_startup = min(len(instances), max(configured_startup, race_min_startup))
+    incumbent: dict | None = None
+    hedge_stats = {"submitted": 0, "duplicates": 0, "disabled": False, "notified": False}
+
+    def add_submitted_jobs(state: dict, seeds: list[int], submitted_at: float) -> list[str]:
+        if [int(seed) for seed in seeds] == instances:
+            job_ids = emit_trial_jobs(root, spec, state["tag"], state["params"])
+        else:
+            job_ids = emit_trial_jobs(root, spec, state["tag"], state["params"], seeds=seeds)
+        for seed, job_id in zip(seeds, job_ids):
+            state["seed_by_job"][job_id] = int(seed)
+            state["job_by_seed"][int(seed)] = job_id
+            if job_id not in state["job_ids"]:
+                state["job_ids"].append(job_id)
+            if job_id not in state["submitted_job_ids"]:
+                state["submitted_job_ids"].append(job_id)
+            if find_result(root, job_id) is None:
+                state["job_started_at"][job_id] = submitted_at
+                state["session_jobs"].add(job_id)
+                hedge_stats["submitted"] += 1
+        return job_ids
 
     while done < args.max_trials or in_flight:
         if stop.exists():
@@ -507,40 +728,123 @@ def run_search(root: Path, spec: dict, engine, engine_name: str, args) -> dict |
             ref, params = engine.ask()
             number = ref.number if hasattr(ref, "number") else ref
             tag = f"{spec['name']}-t{int(number):04d}"
-            job_ids = emit_trial_jobs(root, spec, tag, params)
-            in_flight[tag] = {
+            order = deterministic_race_order(instances, tag) if race_enabled else list(instances)
+            initial_seeds = order[:race_startup] if race_enabled else list(instances)
+            state = {
+                "tag": tag,
                 "ref": ref,
                 "params": params,
-                "job_ids": job_ids,
+                "job_ids": [],
+                "submitted_job_ids": [],
+                "seed_by_job": {},
+                "job_by_seed": {},
+                "order": order,
+                "remaining_seeds": order[len(initial_seeds):] if race_enabled else [],
+                "race_active": race_enabled,
                 "deadline": time.time() + args.trial_timeout_sec,
+                "aliases": {},
+                "alias_to_original": {},
+                "hedged_jobs": set(),
+                "job_started_at": {},
+                "session_jobs": set(),
+                "resolved_jobs": set(),
+                "durations": [],
+                "told": False,
             }
+            add_submitted_jobs(state, initial_seeds, time.time())
+            in_flight[tag] = state
 
+        now = time.time()
         wanted = set()
         for state in in_flight.values():
-            wanted.update(state["job_ids"])
+            wanted.update(state["submitted_job_ids"])
+            wanted.update(state["alias_to_original"])
         result_index.poll(wanted)
+
+        for state in in_flight.values():
+            note_resolved_durations(state, result_index, now)
 
         for tag in list(in_flight):
             state = in_flight[tag]
-            scores, failed, missing = collect_scores(root, state["job_ids"], result_index)
+            scores_by_seed, failed, missing = collect_seed_scores(
+                root, state["submitted_job_ids"], state["seed_by_job"], result_index, state["aliases"]
+            )
             finished = missing == 0
             now = time.time()
+
+            if state["race_active"] and failed:
+                engine.tell(state["ref"], state["params"], None)
+                done += 1
+                print(
+                    f"[{now_iso()}] trial {tag}: score=None "
+                    f"(ok={len(scores_by_seed)} failed={failed} missing={missing})"
+                )
+                state["told"] = True
+                del in_flight[tag]
+                continue
+
+            if (
+                state["race_active"]
+                and state["remaining_seeds"]
+                and incumbent is not None
+                and len(scores_by_seed) >= race_startup
+            ):
+                diffs = [scores_by_seed[s] - incumbent["scores"][s] for s in scores_by_seed if s in incumbent["scores"]]
+                if args.direction == "min":
+                    diffs = [-d for d in diffs]
+                partial_scores = list(scores_by_seed.values())
+                partial_value = aggregate(partial_scores, args.agg) if partial_scores else None
+                if partial_value is not None:
+                    p_value = signed_rank_p_worse(diffs)
+                    if p_value < float(getattr(args, "race_p", 0.05)) and is_worse(partial_value, incumbent["value"], args.direction):
+                        engine.tell(state["ref"], state["params"], partial_value)
+                        done += 1
+                        best = engine.best()
+                        print(
+                            f"[{now_iso()}] pruned {tag} p={p_value:.6g} "
+                            f"after {len(scores_by_seed)}/{len(instances)} seeds"
+                        )
+                        print(
+                            f"[{now_iso()}] trial {tag}: score={partial_value} "
+                            f"(ok={len(scores_by_seed)} failed={failed} missing={missing})"
+                            + (f" best={best['score']:.6g}" if best and best.get("score") is not None else "")
+                        )
+                        state["told"] = True
+                        del in_flight[tag]
+                        continue
+
+            if state["race_active"] and state["remaining_seeds"] and finished and not failed:
+                add_submitted_jobs(state, list(state["remaining_seeds"]), time.time())
+                state["remaining_seeds"] = []
+                scores_by_seed, failed, missing = collect_seed_scores(
+                    root, state["submitted_job_ids"], state["seed_by_job"], result_index, state["aliases"]
+                )
+                finished = missing == 0
+
+            hedge_missing_jobs(root, spec, tag, state, args, now, hedge_stats)
+
             if missing and now > state["deadline"]:
-                for job_id in state["job_ids"]:
-                    if result_index.get(job_id) is None:
-                        result = find_result(root, job_id)
+                for job_id in state["submitted_job_ids"]:
+                    if resolve_result(root, job_id, result_index, state["aliases"]) is None:
+                        result = resolve_result(root, job_id, None, state["aliases"])
                         if result is not None:
                             result_index.cache[job_id] = result
-                scores, failed, missing = collect_scores(root, state["job_ids"], result_index)
+                scores_by_seed, failed, missing = collect_seed_scores(
+                    root, state["submitted_job_ids"], state["seed_by_job"], result_index, state["aliases"]
+                )
                 finished = missing == 0
             expired = now > state["deadline"]
             if not finished and not failed and not expired:
                 continue
+            scores = list(scores_by_seed.values())
             if failed or expired or len(scores) < len(state["job_ids"]):
                 value = None
             else:
                 value = aggregate(scores, args.agg)
             engine.tell(state["ref"], state["params"], value)
+            if value is not None and len(scores_by_seed) == len(instances):
+                if incumbent is None or is_better(value, incumbent["value"], args.direction):
+                    incumbent = {"value": value, "scores": dict(scores_by_seed)}
             done += 1
             best = engine.best()
             print(
@@ -592,6 +896,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="過去の state/search/*.best.json または *.history.jsonl から初期候補をenqueue")
     parser.add_argument("--warm-start-top-k", type=int, default=5,
                         help="history.jsonl から読み込む上位候補数")
+    parser.add_argument("--race", action="store_true", help="Wilcoxonゲート付きシードレーシングを有効化する")
+    parser.add_argument("--race-p", type=float, default=0.05, help="racingの片側Wilcoxon p値しきい値")
+    parser.add_argument("--race-startup", type=int, default=0, help="racingの初期評価seed数(0=ceil(n/3))")
+    parser.add_argument("--hedge", action="store_true", help="残り少数の遅いジョブに複製を投入する")
+    parser.add_argument("--hedge-factor", type=float, default=2.0, help="hedgeしきい値のmedian倍率")
+    parser.add_argument("--hedge-min-wait-sec", type=float, default=30.0, help="hedgeしきい値に足す最小待機秒")
+    parser.add_argument("--hedge-remaining-frac", type=float, default=0.2, help="hedge対象にする未着ジョブ比率")
+    parser.add_argument("--hedge-max-frac", type=float, default=0.10, help="複製数/投入数がこの比率を超えたら停止")
     args = parser.parse_args(argv)
 
     args.root = args.root.resolve()
