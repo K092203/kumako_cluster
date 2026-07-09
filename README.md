@@ -106,19 +106,13 @@ start_worker_supervisor.bat 14 adapt   rem このPCで14スロット + 自動増
 rem または直接: python scripts\supervise_slots.py --slots 14 --adapt --min-slots 2 --max-slots 14
 ```
 
-親機から全PCへ一斉に指示する場合も第2引数に `adapt` を付けるだけで、各launcherが
-supervisor を `--adapt` 付きで起動します。
-
-```bat
-start_all_slots.bat 14 adapt           rem 親機: 全launcherへ「14スロット + 自動増減」を指示
-```
-
 親機から全PCへまとめて開始命令を出す場合(各PCで `start_launcher_agent.bat` を
 起動しておく):
 
 ```bat
 start_launcher_agent.bat              rem 子機: 命令待ち
 start_all_slots.bat 14                rem 親機: 全launcherへ「14スロット起動」を指示
+start_all_slots.bat 14 adapt          rem 同上 + 自動増減(第2引数 adapt を付けるだけ)
 ```
 
 スロット数(14=物理コア / 20=論理コア)は実測で決めます。手順は
@@ -266,7 +260,8 @@ del control\stop_all                          rem 停止解除(その後 supervi
 | `templates/` | ソルバー雛形・cluster_setup例・探索スペック例 | ✓ |
 | `examples/mock_problem/` | 練習用の模擬本選問題(生成+スコアラ+ソルバー) | ✓ |
 | `docs/` | 設計・仕様・運用ドキュメント | ✓ |
-| `tests/` | pytest(claim排他・分類・requeue・setup・artifacts・sweep・探索) | ✓ |
+| `tests/` | pytest(claim排他・分類・requeue・setup・artifacts・sweep・探索・動的スロット) | ✓ |
+| `.github/workflows/` | GitHub Actions(push/PRで pytest を自動実行) | ✓ |
 | `*.bat` | 親機・子機の起動ラッパー | ✓ |
 | `repo_snapshot/` | ワーカーへ配る実行コード(本選ソルバーを置く) | ✗ |
 | `jobs/` `results/` `status/` `control/` `state/` | 実行時の状態 | 一部✗ |
@@ -286,6 +281,10 @@ del control\stop_all                          rem 停止解除(その後 supervi
 ```bash
 python -m pytest tests/ -q
 ```
+
+push / PR ごとに GitHub Actions([.github/workflows/tests.yml](.github/workflows/tests.yml))が
+同じテストを Python 3.9 / 3.12 で自動実行します。Optuna を入れない構成でも
+フォールバックエンジンが動くことを別ジョブで確認しています。
 
 Windows 実機がなくても、一時ディレクトリを root にしてワーカーやブリッジを直接
 起動すれば end-to-end 検証ができます(bat はレビューのみ)。

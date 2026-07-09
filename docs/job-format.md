@@ -197,6 +197,8 @@ supervisor は `<id>-supervisor.json`、launcher は `<id>-launcher.json`、探�
 | `<worker_id>.stop` | 指定ワーカーを停止 |
 | `<base_id>.slots.stop` | 指定PCの supervisor を停止 |
 | `<base_id>.launcher.stop` | 指定PCの launcher を停止 |
-| `<base_id>.start_slots.json` / `start_slots_all.json` | launcher へ「Nスロット起動」を指示(`{"slots": N}`) |
+| `<base_id>.start_slots.json` / `start_slots_all.json` | launcher へスロット起動を指示。最低限 `{"slots": N}`。`adapt` を含めると動的スロットを有効化: `{"slots": N, "adapt": true, "min_slots": 2, "max_slots": 14, "adapt_interval_sec": 60}`(min/max/interval は省略可) |
 
-いずれも中身より**存在**が意味を持つ(start_slots 系のみ slots 数を読む)。
+stop 系は中身より**存在**が意味を持つ。start_slots 系のみ中身を読み、`slots` と
+(あれば)`adapt`・`min_slots`・`max_slots`・`adapt_interval_sec` を supervisor に渡す。
+内容が変わると launcher は supervisor を起動し直す(同じファイルの上書きでも反映)。
