@@ -376,7 +376,16 @@ class OptunaEngine:
             from optuna.storages.journal import JournalFileBackend
         except ImportError:  # optuna < 4
             from optuna.storages import JournalFileStorage as JournalFileBackend
-        return JournalStorage(JournalFileBackend(str(path)))
+            return JournalStorage(JournalFileBackend(str(path)))
+        # 共有フォルダ(SMB)では既定の symlink ロックが使えない
+        # (Windowsで os.symlink が WinError 5 で失敗する)。排他オープン方式の
+        # JournalFileOpenLock は SMB/NFS 上でも動くので、あればそちらを使う。
+        try:
+            from optuna.storages.journal import JournalFileOpenLock
+            backend = JournalFileBackend(str(path), lock_obj=JournalFileOpenLock(str(path)))
+        except ImportError:  # 古い 4.x で未提供ならデフォルトにフォールバック
+            backend = JournalFileBackend(str(path))
+        return JournalStorage(backend)
 
     def best(self) -> dict | None:
         try:
