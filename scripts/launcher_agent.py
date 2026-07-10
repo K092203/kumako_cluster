@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from _ioutil import StatusHeartbeat
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -101,6 +103,9 @@ def main() -> int:
     root = args.root.resolve()
     base_worker_id = register(root, args.local_base, args.max_workers)
     status_path = root / "status" / f"{base_worker_id}-launcher.json"
+    # status 書き込みは専用スレッドへ隔離する。SMB がハングしても control ファイルの
+    # 監視(停止・起動命令の受理)を止めないため(2026-07 リハーサルの再発防止)。
+    heartbeat = StatusHeartbeat(status_path, atomic_write_json).start()
     supervisor: subprocess.Popen | None = None
     last_request_sig = ""
 
@@ -109,15 +114,14 @@ def main() -> int:
         if (root / "control" / "stop_all").exists() or (root / "control" / f"{base_worker_id}.launcher.stop").exists():
             if supervisor is not None and supervisor.poll() is None:
                 supervisor.terminate()
-            atomic_write_json(
-                status_path,
-                {
+            heartbeat.close(
+                final_payload={
                     "worker": f"{base_worker_id}-launcher",
                     "status": "stopped",
                     "current_job": None,
                     "message": "stop requested",
                     "updated_at": now_iso(),
-                },
+                }
             )
             return 0
 
@@ -133,8 +137,7 @@ def main() -> int:
                 supervisor = subprocess.Popen(cmd)
                 last_request_sig = req_sig
 
-        atomic_write_json(
-            status_path,
+        heartbeat.update(
             {
                 "worker": f"{base_worker_id}-launcher",
                 "status": "running",
@@ -142,7 +145,7 @@ def main() -> int:
                 "message": "watching control files",
                 "supervisor_alive": supervisor is not None and supervisor.poll() is None,
                 "updated_at": now_iso(),
-            },
+            }
         )
         time.sleep(args.poll_sec)
 

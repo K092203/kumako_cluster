@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from _ioutil import StatusHeartbeat
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -132,6 +134,9 @@ def main() -> int:
     root = args.root.resolve()
     base_worker_id = read_base_worker_id(root, args.local_base, args.max_workers)
     supervisor_status = root / "status" / f"{base_worker_id}-supervisor.json"
+    # status 書き込みを専用スレッドへ隔離する。SMB がハングしても監視ループと
+    # 停止処理(finally)が無限に待たされないため(2026-07 リハーサルの再発防止)。
+    heartbeat = StatusHeartbeat(supervisor_status, atomic_write_json).start()
     procs: dict[int, subprocess.Popen] = {}
 
     desired = args.slots
@@ -146,8 +151,7 @@ def main() -> int:
     try:
         while True:
             if should_stop(root, base_worker_id):
-                atomic_write_json(
-                    supervisor_status,
+                heartbeat.update(
                     {
                         "worker": f"{base_worker_id}-supervisor",
                         "status": "stopping",
@@ -155,7 +159,7 @@ def main() -> int:
                         "message": "stop requested",
                         "slots": args.slots,
                         "updated_at": now_iso(),
-                    },
+                    }
                 )
                 break
 
@@ -190,8 +194,7 @@ def main() -> int:
                     slot_stop_file(slot).unlink(missing_ok=True)
                     del procs[slot]
 
-            atomic_write_json(
-                supervisor_status,
+            heartbeat.update(
                 {
                     "worker": f"{base_worker_id}-supervisor",
                     "status": "running",
@@ -200,7 +203,7 @@ def main() -> int:
                     + (f" goodput={goodput:.1f}/min" if goodput is not None else ""),
                     "slots": desired,
                     "updated_at": now_iso(),
-                },
+                }
             )
             time.sleep(5)
     finally:
@@ -211,16 +214,17 @@ def main() -> int:
         for proc in procs.values():
             if proc.poll() is None:
                 proc.kill()
-        atomic_write_json(
-            supervisor_status,
-            {
+        # 最終書き込みも心拍経由。SMB がハングしても join で打ち切られ、
+        # プロセスが "stopping" のまま無限に居座らない(worker12 の再発防止)。
+        heartbeat.close(
+            final_payload={
                 "worker": f"{base_worker_id}-supervisor",
                 "status": "stopped",
                 "current_job": None,
                 "message": "all slots stopped",
                 "slots": args.slots,
                 "updated_at": now_iso(),
-            },
+            }
         )
     return 0
 
