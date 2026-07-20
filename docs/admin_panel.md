@@ -63,6 +63,19 @@ launcher/探索ブリッジを種別ごとに分け、`idle`/`running`/`stale` �
 ジョブキュー(pending/running/done/failed)の件数と、`state/incumbent.json` /
 `state/search/*.best.json` の内容も表示する。
 
+画面右上には直近ポーリングの鮮度(LIVE / STALE / ERROR)を示すピルがあり、3秒間隔の
+ポーリングが2回以上途絶えるとSTALEに切り替わる(タブがバックグラウンドに回って
+`setInterval` が抑制された場合などを拾うためのもの)。ワーカー欄の上には
+稼働台数の要約(total/active/idle/stopped/stale)が出て、staleが1台以上いると
+黄色でハイライトされる。
+
+「Pendingキュー(滞留時間)」には、投入から最も時間が経っているジョブを上から
+最大50件表示する(全体件数は別途表示)。既定で10分(`PENDING_DWELL_WARN_SEC`、
+`scripts/admin_panel.py` 内の定数)を超えて滞留しているジョブは警告色のピルになる
+— ワーカーが全て詰まっている・落ちている等の異常検知に使う。`requeue_failed.py`で
+再投入されたジョブは、元のジョブ作成時刻がそのまま `created_at` として使われる
+(再投入時刻ではない)ため、滞留時間はジョブの「初回作成からの経過時間」を表す。
+
 ### ジョブ生成
 2通りの投入方法がある。
 
