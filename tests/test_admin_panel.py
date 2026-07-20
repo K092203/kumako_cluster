@@ -128,6 +128,68 @@ def test_queue_counts_json_files_in_each_bucket(root: Path, client) -> None:
     assert response.get_json() == {"pending": 2, "running": 1, "done": 3, "failed": 1}
 
 
+def test_queue_pending_reports_dwell_time_oldest_first(root: Path, client) -> None:
+    old_created = (datetime.now(timezone.utc).astimezone() - timedelta(seconds=900)).isoformat()
+    new_created = datetime.now(timezone.utc).astimezone().isoformat()
+    write_json(root / "jobs" / "pending" / "old.json", {"job_id": "old", "created_at": old_created})
+    write_json(root / "jobs" / "pending" / "new.json", {"job_id": "new", "created_at": new_created})
+
+    response = client.get("/api/queue/pending")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["total"] == 2
+    assert [job["job_id"] for job in data["jobs"]] == ["old", "new"]
+    assert data["jobs"][0]["age_sec"] >= 900
+    assert data["jobs"][1]["age_sec"] < 900
+    assert data["warn_after_sec"] == admin_panel.PENDING_DWELL_WARN_SEC
+
+
+def test_queue_pending_does_not_fabricate_age_when_created_at_missing(root: Path, client) -> None:
+    write_json(root / "jobs" / "pending" / "no-timestamp.json", {"job_id": "no-timestamp"})
+
+    response = client.get("/api/queue/pending")
+
+    assert response.status_code == 200
+    job = response.get_json()["jobs"][0]
+    assert job["age_sec"] is None
+    assert job["created_at"] is None
+
+
+def test_queue_pending_sorts_missing_timestamps_last(root: Path, client) -> None:
+    write_json(root / "jobs" / "pending" / "no-timestamp.json", {"job_id": "no-timestamp"})
+    write_json(
+        root / "jobs" / "pending" / "dated.json",
+        {"job_id": "dated", "created_at": datetime.now(timezone.utc).astimezone().isoformat()},
+    )
+
+    response = client.get("/api/queue/pending")
+
+    assert [job["job_id"] for job in response.get_json()["jobs"]] == ["dated", "no-timestamp"]
+
+
+def test_queue_pending_empty_reports_empty_list(client) -> None:
+    response = client.get("/api/queue/pending")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"jobs": [], "total": 0, "warn_after_sec": admin_panel.PENDING_DWELL_WARN_SEC}
+
+
+def test_queue_pending_truncates_to_limit_but_reports_true_total(root: Path, client) -> None:
+    for index in range(5):
+        write_json(
+            root / "jobs" / "pending" / f"job{index}.json",
+            {"job_id": f"job{index}", "created_at": datetime.now(timezone.utc).astimezone().isoformat()},
+        )
+
+    with patch("admin_panel.PENDING_LIST_LIMIT", 2):
+        response = client.get("/api/queue/pending")
+
+    data = response.get_json()
+    assert data["total"] == 5
+    assert len(data["jobs"]) == 2
+
+
 def test_random_range_sweep_seed_reproduces_preview_and_submitted_params(root: Path, client) -> None:
     first = client.post("/api/sweep/preview", json=sweep_payload(seed=None))
     assert first.status_code == 200

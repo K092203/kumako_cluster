@@ -39,6 +39,11 @@ JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 ARCHIVE_OUTPUT_RE = re.compile(
     r"archived to (?P<path>\S+): done=(?P<done>\d+) failed=(?P<failed>\d+) result-dirs=(?P<results>\d+)"
 )
+# Pendingジョブの滞留警告閾値(秒)。運用実績に基づく既存設定が無いため暫定値として導入。
+# 変更する場合はこの定数のみ書き換えればよい。
+PENDING_DWELL_WARN_SEC = 600
+# ステータス画面のPending一覧に表示する最大件数(古い順)。全件数はレスポンスの total で分かる。
+PENDING_LIST_LIMIT = 50
 
 app = Flask(__name__, static_folder=None, template_folder=None)
 
@@ -145,6 +150,37 @@ def collect_status(root: Path, stale_sec: int = 60) -> dict[str, list[dict[str, 
 def count_json_files(directory: Path) -> int:
     """Count readable directory entries with a JSON extension."""
     return sum(1 for _ in json_files(directory))
+
+
+def collect_pending_jobs(root: Path, limit: int = PENDING_LIST_LIMIT) -> tuple[list[dict[str, Any]], int]:
+    """List pending jobs with queue dwell time, oldest (by created_at) first.
+
+    created_at is set by every job-creation path (make_job.py, the sweep
+    submit endpoint, and the ZIP upload commit), but requeue_failed.py moves
+    a job from failed/ back to pending/ with a plain os.replace() that does
+    not touch the file's contents. So for a requeued job this timestamp -
+    and therefore its age here - reflects the job's original creation time,
+    not when it re-entered pending/. There is no separate "entered pending"
+    timestamp to fall back on.
+    """
+    now = datetime.now(timezone.utc).astimezone()
+    entries: list[dict[str, Any]] = []
+    for path in json_files(root / "jobs" / "pending"):
+        data = read_json(path)
+        job_id = data.get("job_id", path.stem) if isinstance(data, dict) else path.stem
+        created_at = data.get("created_at") if isinstance(data, dict) else None
+        created = parse_time(created_at) if isinstance(created_at, str) else None
+        age_sec = int((now - created).total_seconds()) if created else None
+        entries.append(
+            {
+                "job_id": str(job_id),
+                "created_at": created_at if isinstance(created_at, str) else None,
+                "age_sec": age_sec,
+            }
+        )
+    # 経過時間が分かるものを滞留が長い順に並べ、created_atが無く算出できないものは末尾へ。
+    entries.sort(key=lambda entry: (entry["age_sec"] is None, -(entry["age_sec"] or 0)))
+    return entries[:limit], len(entries)
 
 
 def collect_incumbent(root: Path) -> dict[str, Any]:
@@ -496,6 +532,12 @@ def api_queue() -> Response:
             "failed": count_json_files(jobs / "failed"),
         }
     )
+
+
+@app.get("/api/queue/pending")
+def api_queue_pending() -> Response:
+    jobs, total = collect_pending_jobs(cluster_root(), PENDING_LIST_LIMIT)
+    return jsonify({"jobs": jobs, "total": total, "warn_after_sec": PENDING_DWELL_WARN_SEC})
 
 
 @app.get("/api/incumbent")

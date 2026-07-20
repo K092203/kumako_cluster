@@ -166,6 +166,31 @@
     .status-other { background: var(--surface-alt); color: var(--ink-soft); }
     .empty { padding: 1.1rem; color: var(--ink-soft); }
     .error { color: var(--bad); }
+    .section.has-attention { border-color: var(--warn); }
+    .section.has-attention > h3 { background: var(--warn-tint); color: var(--warn); }
+    .attention-badge {
+      margin-left: auto; background: var(--warn); color: var(--paper-raised); border-radius: 999px;
+      padding: .12em .62em .14em; font-size: .68rem; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+    }
+    .worker-summary {
+      display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; margin-bottom: 1.1rem;
+      padding: .7rem 1.1rem; border: 1px solid var(--line); background: var(--paper-raised);
+      border-radius: var(--radius); box-shadow: var(--shadow-sm); font-size: .82rem;
+    }
+    .worker-summary.has-attention { border-color: var(--warn); }
+    .worker-summary-label { font-weight: 700; color: var(--ink-soft); text-transform: uppercase; font-size: .7rem; letter-spacing: .1em; }
+    .worker-chip { font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace; color: var(--ink-soft); }
+    .worker-chip-warn { color: var(--warn); font-weight: 700; }
+    .worker-summary-link { margin-left: auto; color: var(--accent); font-size: .78rem; text-decoration: none; }
+    .worker-summary-link:hover { text-decoration: underline; }
+    .fresh-pill {
+      display: inline-flex; align-items: center; gap: .35em; padding: .16em .6em .18em; border-radius: 999px;
+      font-weight: 700; font-size: .72rem; letter-spacing: .02em; margin-right: .5em; vertical-align: middle;
+    }
+    .fresh-pill::before { content: ""; width: .5em; height: .5em; border-radius: 50%; background: currentColor; flex: none; }
+    .fresh-live { background: var(--ok-tint); color: var(--ok); }
+    .fresh-stale { background: var(--warn-tint); color: var(--warn); }
+    .fresh-error { background: var(--bad-tint); color: var(--bad); }
     .incumbent { padding: 1.1rem; margin-top: 1.1rem; }
     .incumbent h3 { display: flex; align-items: center; gap: .55em; margin: 0 0 .8rem; font-size: .88rem; font-weight: 700; letter-spacing: .02em; color: var(--accent-strong); }
     .incumbent h3::before { content: ""; width: .5em; height: .5em; flex: none; background: currentColor; border-radius: 2px; }
@@ -245,6 +270,11 @@
         <div class="card"><div class="card-label">done</div><div class="metric" id="queue-done">-</div></div>
         <div class="card"><div class="card-label">failed</div><div class="metric" id="queue-failed">-</div></div>
       </div>
+      <div class="worker-summary empty" id="worker-summary" aria-label="Worker概要">読み込み中…</div>
+      <section class="section" aria-labelledby="pending-list-title">
+        <h3 id="pending-list-title">Pending キュー(滞留時間)</h3>
+        <div id="pending-list" class="empty">読み込み中…</div>
+      </section>
       <div id="status-sections"></div>
       <section class="incumbent"><h3>Incumbent / Search best</h3><pre id="incumbent-data">読み込み中…</pre></section>
     </section>
@@ -342,18 +372,79 @@
     "use strict";
     const sectionNames = { workers: "Workers", supervisors: "Supervisors", launchers: "Launchers", bridges: "Search bridges" };
     const statusSections = document.getElementById("status-sections");
+    const workerSummary = document.getElementById("worker-summary");
+    const pendingList = document.getElementById("pending-list");
+    const POLL_INTERVAL_MS = 3000;
+    // 「LIVE」表示を続けるための猶予。ポーリング間隔(3秒)の2倍を超えて更新が
+    // 途絶えたら、明示的なエラーが無くても STALE として扱う(バックグラウンド
+    // タブでの setInterval 抑制など、fetch自体は失敗しないケースを拾うため)。
+    const FRESH_STALE_AFTER_MS = POLL_INTERVAL_MS * 2;
+    let lastSuccessAt = null;
+    let lastErrorMessage = null;
 
     function text(value) { return value === null || value === undefined || value === "" ? "-" : String(value); }
     function statusClass(status) {
       return ["idle", "running", "stopped", "stale"].includes(status) ? "status-" + status : "status-other";
     }
     function makeCell(value) { const td = document.createElement("td"); td.textContent = text(value); return td; }
+    function shortAge(sec) {
+      if (sec === null || sec === undefined) return "-";
+      if (sec < 60) return sec + "s";
+      const totalMin = Math.floor(sec / 60);
+      if (totalMin < 60) return totalMin + "m";
+      const hours = Math.floor(totalMin / 60), minutes = totalMin % 60;
+      return minutes ? hours + "h" + minutes + "m" : hours + "h";
+    }
+    function renderWorkerSummary(rows) {
+      if (!rows.length) {
+        workerSummary.className = "worker-summary empty";
+        workerSummary.textContent = "Worker概要: 状態ファイルはありません。";
+        return;
+      }
+      const counts = { total: rows.length, active: 0, idle: 0, stopped: 0, stale: 0 };
+      for (const row of rows) {
+        if (row.status === "running") counts.active += 1;
+        else if (row.status === "idle") counts.idle += 1;
+        else if (row.status === "stopped") counts.stopped += 1;
+        else if (row.status === "stale") counts.stale += 1;
+      }
+      workerSummary.className = "worker-summary" + (counts.stale > 0 ? " has-attention" : "");
+      workerSummary.replaceChildren();
+      const label = document.createElement("span"); label.className = "worker-summary-label"; label.textContent = "Workers";
+      workerSummary.append(label);
+      for (const key of ["total", "active", "idle", "stopped", "stale"]) {
+        const chip = document.createElement("span");
+        chip.className = "worker-chip" + (key === "stale" && counts[key] > 0 ? " worker-chip-warn" : "");
+        chip.textContent = key + " " + counts[key];
+        workerSummary.append(chip);
+      }
+      const link = document.createElement("a"); link.href = "#group-workers"; link.className = "worker-summary-link"; link.textContent = "詳細を見る →";
+      workerSummary.append(link);
+    }
     function renderStatus(groups) {
       statusSections.replaceChildren();
+      const keys = Object.keys(sectionNames);
+      const totalRows = keys.reduce((sum, key) => sum + (Array.isArray(groups[key]) ? groups[key].length : 0), 0);
+      renderWorkerSummary(Array.isArray(groups.workers) ? groups.workers : []);
+      if (totalRows === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Workers / Supervisors / Launchers / Search bridges — 状態ファイルはありません。";
+        statusSections.append(empty);
+        return;
+      }
       for (const [key, title] of Object.entries(sectionNames)) {
-        const section = document.createElement("section"); section.className = "section";
-        const heading = document.createElement("h3"); heading.textContent = title; section.append(heading);
+        const section = document.createElement("section"); section.className = "section"; section.id = "group-" + key;
+        const heading = document.createElement("h3");
+        const headingText = document.createElement("span"); headingText.textContent = title; heading.append(headingText);
         const rows = Array.isArray(groups[key]) ? groups[key] : [];
+        const staleCount = rows.filter((row) => row.status === "stale").length;
+        if (staleCount > 0) {
+          section.classList.add("has-attention");
+          const badge = document.createElement("span"); badge.className = "attention-badge"; badge.textContent = staleCount + " stale";
+          heading.append(badge);
+        }
+        section.append(heading);
         if (!rows.length) {
           const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "状態ファイルはありません。"; section.append(empty);
         } else {
@@ -375,6 +466,74 @@
     function renderConnectionError() {
       statusSections.replaceChildren();
       const message = document.createElement("div"); message.className = "empty error"; message.textContent = "接続できません。再試行しています…"; statusSections.append(message);
+    }
+    function renderPendingList(data) {
+      const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+      const warnAfter = typeof data.warn_after_sec === "number" ? data.warn_after_sec : null;
+      pendingList.replaceChildren();
+      if (!jobs.length) {
+        pendingList.className = "empty";
+        pendingList.textContent = "Pendingジョブはありません。";
+        return;
+      }
+      pendingList.className = "";
+      const table = document.createElement("table");
+      table.innerHTML = "<thead><tr><th>job_id</th><th>queued at</th><th>age</th></tr></thead>";
+      const body = document.createElement("tbody");
+      for (const job of jobs) {
+        const tr = document.createElement("tr");
+        tr.append(makeCell(job.job_id), makeCell(job.created_at));
+        const ageCell = document.createElement("td");
+        if (job.age_sec === null || job.age_sec === undefined) {
+          ageCell.textContent = "-";
+        } else if (warnAfter !== null && job.age_sec >= warnAfter) {
+          const pill = document.createElement("span");
+          pill.className = "status-pill status-stale"; pill.textContent = shortAge(job.age_sec); pill.title = job.age_sec + "s";
+          ageCell.append(pill);
+        } else {
+          ageCell.textContent = shortAge(job.age_sec);
+          ageCell.title = job.age_sec + "s";
+        }
+        tr.append(ageCell);
+        body.append(tr);
+      }
+      table.append(body); pendingList.append(table);
+      if (data.total > jobs.length) {
+        const note = document.createElement("div"); note.className = "timestamp";
+        note.textContent = "滞留が長い " + jobs.length + " 件を表示中(pending全 " + data.total + " 件)";
+        pendingList.append(note);
+      }
+    }
+    function renderPendingConnectionError() {
+      pendingList.className = "empty error";
+      pendingList.textContent = "Pending一覧を取得できません。再試行しています…";
+    }
+    async function refreshPending() {
+      try {
+        renderPendingList(await getJson("/api/queue/pending"));
+      } catch (error) {
+        renderPendingConnectionError();
+      }
+    }
+    function updateFreshnessDisplay() {
+      const el = document.getElementById("last-updated");
+      if (!lastSuccessAt) return;
+      el.replaceChildren();
+      const pill = document.createElement("span");
+      if (lastErrorMessage) {
+        pill.className = "fresh-pill fresh-error"; pill.textContent = "ERROR";
+        el.append(pill, document.createTextNode(lastErrorMessage));
+      } else {
+        const elapsedMs = Date.now() - lastSuccessAt.getTime();
+        if (elapsedMs <= FRESH_STALE_AFTER_MS) {
+          pill.className = "fresh-pill fresh-live"; pill.textContent = "LIVE";
+          el.append(pill, document.createTextNode("Updated " + Math.max(0, Math.floor(elapsedMs / 1000)) + "s ago"));
+        } else {
+          pill.className = "fresh-pill fresh-stale"; pill.textContent = "STALE";
+          el.append(pill, document.createTextNode("Last updated " + lastSuccessAt.toLocaleTimeString()));
+        }
+      }
+      el.title = lastSuccessAt.toLocaleString();
     }
     async function getJson(url) {
       const response = await fetch(url, { cache: "no-store" });
@@ -922,15 +1081,22 @@
         renderStatus(status);
         for (const key of ["pending", "running", "done", "failed"]) document.getElementById("queue-" + key).textContent = text(queue[key]);
         document.getElementById("incumbent-data").textContent = JSON.stringify(incumbent, null, 2);
-        document.getElementById("last-updated").textContent = "updated " + new Date().toLocaleTimeString();
+        lastSuccessAt = new Date();
+        lastErrorMessage = null;
       } catch (error) {
         renderConnectionError();
-        document.getElementById("last-updated").textContent = "接続エラー";
+        lastErrorMessage = error.message || "接続できません";
       }
+      updateFreshnessDisplay();
       try {
         await refreshSearch();
       } catch (error) {
         // refreshSearch keeps polling failures confined to the search panel.
+      }
+      try {
+        await refreshPending();
+      } catch (error) {
+        // refreshPending keeps polling failures confined to the pending list.
       }
     }
     function activateTab(tab) {
@@ -941,7 +1107,8 @@
     document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab)));
     refresh();
     refreshTemplates();
-    window.setInterval(refresh, 3000);
+    window.setInterval(refresh, POLL_INTERVAL_MS);
+    window.setInterval(updateFreshnessDisplay, 1000);
   </script>
 </body>
 </html>
