@@ -28,6 +28,9 @@ def iqm(values: list) -> float:
     return sum(core) / len(core)
 
 
+AGG_STATS = {"mean": (lambda vs: sum(vs) / len(vs)), "iqm": iqm, "min": min, "max": max}
+
+
 def stratified_bootstrap_ci(strata: list, stat, n_boot: int = 2000, alpha: float = 0.05, seed: int = 0):
     """層(=インスタンスseed)ごとに再標本化するブートストラップ95%CI。
 
@@ -124,7 +127,7 @@ def aggregate_sweeps(results: list[dict], objective: str, agg: str) -> list[dict
                 continue
             values.append(v)
             strata_map.setdefault(instance_key(r), []).append(v)
-        stat = iqm if agg == "iqm" else (lambda vs: sum(vs) / len(vs))
+        stat = AGG_STATS[agg]
         lo, hi = stratified_bootstrap_ci(list(strata_map.values()), stat) if values else (None, None)
         row = {
             "sweep_id": sweep_id,

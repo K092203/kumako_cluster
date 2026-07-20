@@ -48,6 +48,47 @@ def call_with_timeout(
     return True, box.get("value"), box.get("error")
 
 
+class SingleFlightTimeout:
+    """キーごとにハング中の I/O を1本に制限するタイムアウト呼び出し。
+
+    control ファイルの ``.exists()`` のように、ポーリングループから繰り返す
+    SMB I/O に使う。前回の同一キー呼び出しがタイムアウト後も実行中なら、新しい
+    daemon スレッドは作らず、タイムアウトと同じ結果を返す。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._inflight: dict[str, threading.Event] = {}
+
+    def call(
+        self, key: str, fn: Callable[[], Any], timeout_sec: float
+    ) -> Tuple[bool, Optional[Any], Optional[BaseException]]:
+        """``call_with_timeout`` と同じ戻り値を、キーごとに single-flight で返す。"""
+        marker = threading.Event()
+        with self._lock:
+            if key in self._inflight:
+                return False, None, None
+            self._inflight[key] = marker
+
+        def release_when_finished() -> Any:
+            try:
+                return fn()
+            finally:
+                with self._lock:
+                    if self._inflight.get(key) is marker:
+                        del self._inflight[key]
+                marker.set()
+
+        try:
+            return call_with_timeout(release_when_finished, timeout_sec)
+        except BaseException:
+            # スレッド起動に失敗した場合など、実行されなかったキーを残さない。
+            with self._lock:
+                if self._inflight.get(key) is marker:
+                    del self._inflight[key]
+            raise
+
+
 class StatusHeartbeat:
     """status ファイルへの書き込みを専用スレッドへ隔離する心拍。
 

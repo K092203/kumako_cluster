@@ -75,12 +75,14 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(min(args.report_sec, max(1.0, deadline - time.time())))
         elapsed_min = (time.time() - start) / 60
         done = count_done(root, prefix)
-        print(f"[{elapsed_min:5.1f} min] done={done} ({done / elapsed_min:.1f} jobs/min)")
+        rate = f"{done / elapsed_min:.1f}" if elapsed_min >= 1e-3 else "-"
+        print(f"[{elapsed_min:5.1f} min] done={done} ({rate} jobs/min)")
 
     done = count_done(root, prefix)
     elapsed_min = (time.time() - start) / 60
+    rate = f"{done / elapsed_min:.1f}" if elapsed_min >= 1e-3 else "-"
     print()
-    print(f"=== result: {done} jobs in {elapsed_min:.1f} min = {done / elapsed_min:.1f} jobs/min ===")
+    print(f"=== result: {done} jobs in {elapsed_min:.1f} min = {rate} jobs/min ===")
 
     counts = per_worker_counts(root, prefix)
     for worker in sorted(counts):

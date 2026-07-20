@@ -14,7 +14,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _ioutil import StatusHeartbeat
+from _ioutil import SingleFlightTimeout, StatusHeartbeat
+
+
+_CONTROL_FILE_CALLS = SingleFlightTimeout()
 
 
 def now_iso() -> str:
@@ -82,14 +85,44 @@ def read_start_request(root: Path, base_worker_id: str) -> dict | None:
     control = root / "control"
     candidates = [control / f"{base_worker_id}.start_slots.json", control / "start_slots_all.json"]
     for path in candidates:
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
+        completed, exists, error = _CONTROL_FILE_CALLS.call(
+            str(path), lambda path=path: path.exists(), timeout_sec=5.0
+        )
+        if not completed:
+            continue
+        if error is not None:
+            raise error
+        if exists:
+            completed, text, error = _CONTROL_FILE_CALLS.call(
+                str(path), lambda path=path: path.read_text(encoding="utf-8"), timeout_sec=5.0
+            )
+            if not completed:
+                continue
+            if error is not None:
                 data = {}
+            else:
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    data = {}
             data["_path"] = str(path)
             return data
     return None
+
+
+def should_stop(root: Path, base_worker_id: str) -> bool:
+    control = root / "control"
+    for path in (control / "stop_all", control / f"{base_worker_id}.launcher.stop"):
+        completed, exists, error = _CONTROL_FILE_CALLS.call(
+            str(path), lambda path=path: path.exists(), timeout_sec=5.0
+        )
+        if not completed:
+            continue
+        if error is not None:
+            raise error
+        if exists:
+            return True
+    return False
 
 
 def main() -> int:
@@ -111,7 +144,7 @@ def main() -> int:
 
     print(f"{base_worker_id}: launcher agent ready")
     while True:
-        if (root / "control" / "stop_all").exists() or (root / "control" / f"{base_worker_id}.launcher.stop").exists():
+        if should_stop(root, base_worker_id):
             if supervisor is not None and supervisor.poll() is None:
                 supervisor.terminate()
             heartbeat.close(

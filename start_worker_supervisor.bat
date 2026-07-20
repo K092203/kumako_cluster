@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 set "SLOTS=%~1"
 if "%SLOTS%"=="" set "SLOTS=14"
-rem 第2引数に adapt を渡すと goodputフィードバックでスロット数を自動増減する
+rem second arg "adapt" enables goodput-feedback auto-scaling of slot count
 set "ADAPT="
 if /I "%~2"=="adapt" set "ADAPT=--adapt"
 pushd "%~dp0"

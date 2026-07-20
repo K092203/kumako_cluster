@@ -17,6 +17,10 @@ def default_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+# 注意: この存在チェックから書き込みまではアトミックではない（TOCTOU）。
+# job_id の一意性は呼び出し側（make_job.py / optuna_bridge.py）の ID 採番が保証する前提で、
+# 同一 job_id の 2 ジョブが同時に完了することは通常の運用では起こらない。
+# 将来この前提を崩す変更を加える場合は、この関数の非アトミック性を再検討すること。
 def unique_path(directory: Path, filename: str) -> Path:
     candidate = directory / filename
     if not candidate.exists():

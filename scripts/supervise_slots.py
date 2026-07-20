@@ -14,7 +14,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _ioutil import StatusHeartbeat
+from _ioutil import SingleFlightTimeout, StatusHeartbeat
+
+
+_CONTROL_FILE_CALLS = SingleFlightTimeout()
 
 
 def now_iso() -> str:
@@ -50,11 +53,21 @@ def read_base_worker_id(root: Path, local_base: Path, max_workers: int) -> str:
 
 def should_stop(root: Path, base_worker_id: str) -> bool:
     control = root / "control"
-    return (
-        (control / "stop_all").exists()
-        or (control / f"{base_worker_id}.stop").exists()
-        or (control / f"{base_worker_id}.slots.stop").exists()
-    )
+    for path in (
+        control / "stop_all",
+        control / f"{base_worker_id}.stop",
+        control / f"{base_worker_id}.slots.stop",
+    ):
+        completed, exists, error = _CONTROL_FILE_CALLS.call(
+            str(path), lambda path=path: path.exists(), timeout_sec=5.0
+        )
+        if not completed:
+            continue
+        if error is not None:
+            raise error
+        if exists:
+            return True
+    return False
 
 
 def scan_outcomes(root: Path, base_worker_id: str, since: float) -> tuple[int, int, float]:

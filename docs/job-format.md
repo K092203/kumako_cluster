@@ -74,11 +74,13 @@
 | `exit_code` | int \| null | プロセス終了コード(タイムアウト時 null) |
 | `wall_elapsed` | number | ワーカー実測の経過秒(参考。富岳とは相関しない) |
 | `measure` | object | `{elapsed, score, correct}`。ゲート非通過時は全て null |
+| `warnings` | list<string> (optional) | 測定値について注意がある場合の警告。`correct` 未報告で既定の合格扱いになった場合に記録される |
 | `artifacts` | object | `{collected: [...], missing: [...]}` |
 | `error` | string | ワーカー内部エラー/ setup失敗のメッセージ(なければ空) |
 | `finished_at` | string | ISO8601 終了時刻 |
 
-`measure.score` が最適化対象、`measure.correct` が妥当性(false なら候補から除外)。
+`measure.score` が最適化対象、`measure.correct` が妥当性(false なら候補から除外)。`correct`
+が未報告のときは null のまま既定で合格扱いとなり、信頼済みの測定値であれば `warnings` に記録される。
 
 ### 同じディレクトリの他ファイル
 

@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from _ioutil import StatusHeartbeat, call_with_timeout  # noqa: E402
+from _ioutil import SingleFlightTimeout  # noqa: E402
 
 
 def test_call_with_timeout_fast_returns_value():
@@ -41,6 +42,64 @@ def test_call_with_timeout_times_out_without_blocking_caller():
     assert completed is False
     assert value is None and error is None
     assert elapsed < 2.0  # 5秒スリープの完了を待たずに返る
+
+
+def test_single_flight_timeout_returns_results_for_completed_calls():
+    single_flight = SingleFlightTimeout()
+
+    assert single_flight.call("control/stop_all", lambda: 42, timeout_sec=1.0) == (True, 42, None)
+    assert single_flight.call("control/stop_all", lambda: "again", timeout_sec=1.0) == (True, "again", None)
+
+
+def test_single_flight_timeout_does_not_add_thread_for_hung_key():
+    single_flight = SingleFlightTimeout()
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def hang():
+        entered.set()
+        try:
+            release.wait(10.0)
+        finally:
+            finished.set()
+
+    assert single_flight.call("control/stop_all", hang, timeout_sec=0.1) == (False, None, None)
+    assert entered.wait(1.0)
+    thread_count = threading.active_count()
+
+    start = time.monotonic()
+    assert single_flight.call("control/stop_all", lambda: True, timeout_sec=1.0) == (False, None, None)
+    assert time.monotonic() - start < 0.5
+    assert threading.active_count() == thread_count
+
+    release.set()
+    assert finished.wait(1.0)
+
+
+def test_single_flight_timeout_allows_different_key_while_one_is_hung():
+    single_flight = SingleFlightTimeout()
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def hang():
+        entered.set()
+        try:
+            release.wait(10.0)
+        finally:
+            finished.set()
+
+    assert single_flight.call("control/stop_all", hang, timeout_sec=0.1) == (False, None, None)
+    assert entered.wait(1.0)
+    assert single_flight.call("control/worker.stop", lambda: "available", timeout_sec=1.0) == (
+        True,
+        "available",
+        None,
+    )
+
+    release.set()
+    assert finished.wait(1.0)
 
 
 def test_heartbeat_writes_latest_payload():

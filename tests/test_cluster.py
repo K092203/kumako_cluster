@@ -134,3 +134,49 @@ def test_all_scripts_have_python_version_guard() -> None:
         and "import _pyversion" not in p.read_text(encoding="utf-8")
     ]
     assert missing == []
+
+
+def test_process_job_with_heartbeat_writes_status(root: Path) -> None:
+    write_job(root, "job010", command="dummy", seed=1, elapsed=0.0)
+    claimed = worker.claim_job(root, "worker01")
+    status_path = root / "status" / "worker01.json"
+    heartbeat = worker.StatusHeartbeat(status_path, worker.atomic_write_json).start()
+    try:
+        worker.process_job(root, "worker01", root / "worker_local" / "worker01", claimed, heartbeat=heartbeat)
+    finally:
+        heartbeat.close(
+            final_payload={
+                "worker": "worker01",
+                "status": "idle",
+                "current_job": None,
+                "message": "",
+                "updated_at": worker.now_iso(),
+            }
+        )
+
+    data = json.loads(status_path.read_text(encoding="utf-8"))
+    assert data["worker"] == "worker01"
+    assert data["status"] == "idle"
+    assert data["current_job"] is None
+    assert (root / "jobs" / "done" / "job010.json").exists()
+
+
+def test_result_json_warns_when_correct_not_reported(root: Path) -> None:
+    cmd = [sys.executable, "-c", "print('#TUNE elapsed=1.0 score=5.0')"]
+    write_job(root, "job011", command=cmd, timeout_sec=30)
+    claimed = worker.claim_job(root, "worker01")
+    worker.process_job(root, "worker01", root / "worker_local" / "worker01", claimed)
+
+    result = json.loads((root / "results" / "worker01" / "job011" / "result.json").read_text(encoding="utf-8"))
+    assert result["outcome"] == "completed"
+    assert result["measure"]["correct"] is None
+    assert "measure.correct not reported" in result["warnings"][0]
+
+
+def test_result_json_no_warnings_when_correct_reported(root: Path) -> None:
+    write_job(root, "job012", command="dummy", seed=1, elapsed=0.0)
+    claimed = worker.claim_job(root, "worker01")
+    worker.process_job(root, "worker01", root / "worker_local" / "worker01", claimed)
+
+    result = json.loads((root / "results" / "worker01" / "job012" / "result.json").read_text(encoding="utf-8"))
+    assert "warnings" not in result

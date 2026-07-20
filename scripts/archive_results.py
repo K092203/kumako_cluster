@@ -15,15 +15,30 @@ def default_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+# 注意: この存在チェックから書き込みまではアトミックではない（TOCTOU）。
+# archive_results.py は単一オペレータが手動で実行するコマンドという前提である。
+# 同じ target ディレクトリへ複数の archive_results.py プロセスを同時実行すると、
+# 既存ファイルの上書きが起こりうるため、同時実行しないこと。
+def unique_path(directory: Path, filename: str) -> Path:
+    candidate = directory / filename
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem
+    suffix = candidate.suffix
+    for i in range(2, 10000):
+        numbered = directory / f"{stem}-{i}{suffix}"
+        if not numbered.exists():
+            return numbered
+    raise RuntimeError(f"could not allocate unique path for {candidate}")
+
+
 def move_children(source: Path, target: Path) -> int:
     if not source.exists():
         return 0
     target.mkdir(parents=True, exist_ok=True)
     moved = 0
     for child in sorted(source.iterdir()):
-        dest = target / child.name
-        if dest.exists():
-            dest = target / f"{child.name}-{moved}"
+        dest = unique_path(target, child.name)
         os.replace(child, dest)
         moved += 1
     return moved

@@ -8,11 +8,13 @@ on:
 jobs:
   # メイン: Optuna を入れて TPE 経路まで含む全テストを回す。
   # Python は最低要件 3.9(_pyversion.py の MINIMUM)と近年版 3.12 のマトリクス。
+  # 実運用は Windows のため、Windows 固有の挙動も CI で検証する。
   pytest:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.9", "3.12"]
     steps:
       - uses: actions/checkout@v4

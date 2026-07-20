@@ -63,6 +63,12 @@ def test_render_template_uses_params(root: Path) -> None:
     assert worker.render_template("--alpha __alpha__ --seed __seed__", job) == "--alpha 0.5 --seed 3"
 
 
+def test_render_template_no_substring_collision() -> None:
+    job = {"x": "A", "x_": "B"}
+    rendered = worker.render_template("__x__ __x___", job)
+    assert rendered == "A B"
+
+
 def test_result_json_carries_sweep_metadata(root: Path) -> None:
     path = root / "jobs" / "pending" / "job001.json"
     path.write_text(
@@ -128,3 +134,46 @@ def test_iqm_and_bootstrap_ci():
     lo, hi = stratified_bootstrap_ci([[1.0, 1.1], [2.0, 2.1]], iqm, n_boot=500, seed=1)
     assert lo is not None and lo <= hi
     assert stratified_bootstrap_ci([], iqm) == (None, None)
+
+
+def test_agg_stats():
+    assert summarize_results.AGG_STATS["min"]([5, 1, 9]) == 1
+    assert summarize_results.AGG_STATS["max"]([5, 1, 9]) == 9
+    assert summarize_results.AGG_STATS["mean"]([5, 1, 9]) == 5
+    assert summarize_results.AGG_STATS["iqm"] is summarize_results.iqm
+
+
+def test_aggregate_sweeps_uses_agg_stats_for_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_ci(strata, stat, **kwargs):
+        calls.append(stat)
+        return 0.0, 1.0
+
+    monkeypatch.setattr(summarize_results, "stratified_bootstrap_ci", fake_ci)
+    results = [
+        {
+            "job_id": "s-i1",
+            "sweep_id": "s",
+            "outcome": "completed",
+            "measure": {"score": 1.0, "elapsed": 1.0, "correct": True},
+        },
+        {
+            "job_id": "s-i2",
+            "sweep_id": "s",
+            "outcome": "completed",
+            "measure": {"score": 9.0, "elapsed": 1.0, "correct": True},
+        },
+    ]
+
+    summarize_results.aggregate_sweeps(results, "max-score", "min")
+    assert calls[-1] is min
+
+    summarize_results.aggregate_sweeps(results, "max-score", "max")
+    assert calls[-1] is max
+
+    summarize_results.aggregate_sweeps(results, "max-score", "mean")
+    assert calls[-1] is summarize_results.AGG_STATS["mean"]
+
+    summarize_results.aggregate_sweeps(results, "max-score", "iqm")
+    assert calls[-1] is summarize_results.iqm
