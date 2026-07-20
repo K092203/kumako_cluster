@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -662,6 +663,25 @@ def api_archive() -> Response | tuple[Response, int]:
     )
 
 
+def wait_for_port(port: int, proc: "subprocess.Popen[Any]", timeout: float = 5.0) -> bool:
+    """Block until the process accepts a connection, exits, or the timeout passes.
+
+    window.open() on the frontend fires as soon as this endpoint responds, so
+    without this wait the popup can race the dashboard subprocess's own startup
+    and land on a bare connection-refused error page.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return True
+        except OSError:
+            time.sleep(0.15)
+    return proc.poll() is None
+
+
 @app.post("/api/optuna-dashboard/launch")
 def api_optuna_dashboard_launch() -> Response | tuple[Response, int]:
     payload = request.get_json(silent=True)
@@ -690,12 +710,16 @@ def api_optuna_dashboard_launch() -> Response | tuple[Response, int]:
             port = port_socket.getsockname()[1]
         try:
             proc = subprocess.Popen(
-                ["optuna-dashboard", f"journal:{journal_path}", "--port", str(port), "--host", "127.0.0.1"]
+                ["optuna-dashboard", str(journal_path), "--port", str(port), "--host", "127.0.0.1"]
             )
         except OSError as error:
             return jsonify({"error": f"optuna-dashboard を起動できません: {error}"}), 500
         _dashboard_processes[name] = (proc, port)
 
+    if not wait_for_port(port, proc):
+        return jsonify(
+            {"error": "optuna-dashboard の起動に失敗しました(このパネルのコンソール出力を確認してください)。"}
+        ), 500
     return jsonify({"name": name, "port": port, "reused": False, "url": f"http://127.0.0.1:{port}/"})
 
 

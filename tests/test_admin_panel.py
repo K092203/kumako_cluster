@@ -284,6 +284,81 @@ def test_templates_can_be_saved_listed_and_deleted_and_reject_bad_kind(client) -
     assert listed_after_delete.get_json()["templates"] == []
 
 
+def test_optuna_dashboard_launch_passes_plain_journal_path(root: Path, client) -> None:
+    journal_path = root / "state" / "search" / "trial.journal.log"
+    write_json(journal_path, {})  # only existence matters; content is never parsed here
+
+    process = MagicMock()
+    process.poll.return_value = None
+    with (
+        patch("admin_panel.subprocess.Popen", return_value=process) as popen,
+        patch("admin_panel.shutil.which", return_value="/usr/bin/optuna-dashboard"),
+        patch("admin_panel.wait_for_port", return_value=True),
+    ):
+        response = client.post("/api/optuna-dashboard/launch", json={"name": "trial"})
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["reused"] is False
+    assert data["url"] == "http://127.0.0.1:" + str(data["port"]) + "/"
+    command = popen.call_args.args[0]
+    # optuna-dashboard の CLI は生のパスをそのまま受け取る(journal: のようなURLスキームは存在しない)。
+    assert command[0] == "optuna-dashboard"
+    assert command[1] == str(journal_path)
+    assert not command[1].startswith("journal:")
+
+
+def test_optuna_dashboard_launch_missing_journal_returns_error(client) -> None:
+    response = client.post("/api/optuna-dashboard/launch", json={"name": "no-such-search"})
+
+    assert response.status_code == 400
+    assert "journal" in response.get_json()["error"]
+
+
+def test_optuna_dashboard_launch_reports_error_when_process_never_becomes_reachable(root: Path, client) -> None:
+    write_json(root / "state" / "search" / "trial.journal.log", {})
+
+    process = MagicMock()
+    process.poll.return_value = None
+    with (
+        patch("admin_panel.subprocess.Popen", return_value=process),
+        patch("admin_panel.shutil.which", return_value="/usr/bin/optuna-dashboard"),
+        patch("admin_panel.wait_for_port", return_value=False),
+    ):
+        response = client.post("/api/optuna-dashboard/launch", json={"name": "trial"})
+
+    assert response.status_code == 500
+    assert "optuna-dashboard" in response.get_json()["error"]
+
+
+def test_wait_for_port_returns_true_once_a_real_listener_accepts_connections() -> None:
+    import socket as socket_module
+    from unittest.mock import MagicMock as Mock
+
+    server = socket_module.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        never_exited = Mock()
+        never_exited.poll.return_value = None
+        assert admin_panel.wait_for_port(port, never_exited, timeout=2.0) is True
+    finally:
+        server.close()
+
+
+def test_wait_for_port_returns_false_when_process_exits_before_listening() -> None:
+    from unittest.mock import MagicMock as Mock
+
+    with admin_panel.socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+
+    exited = Mock()
+    exited.poll.return_value = 1
+    assert admin_panel.wait_for_port(closed_port, exited, timeout=2.0) is False
+
+
 def test_archive_parses_archive_script_summary(client) -> None:
     completed = SimpleNamespace(
         returncode=0,
