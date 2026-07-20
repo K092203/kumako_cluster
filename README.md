@@ -243,6 +243,18 @@ del control\stop_all                          rem 停止解除(その後 supervi
 
 コマンドの早見表は [docs/honsen_runbook.md](docs/honsen_runbook.md) の「コマンド早見表」節。
 
+### 管理画面(任意・ローカルWeb GUI)
+
+`status.bat` / ジョブ生成(範囲指定スイープ・手作りJSONのZIP投入) / `optuna_bridge.py` による
+探索の起動・停止 / `archive_results.py` を1画面にまとめたローカル管理画面もあります
+(Flask導入時のみ利用可、`http://127.0.0.1:8765` のlocalhost限定・認証なし)。
+
+```bat
+admin_panel.bat                               rem 起動してブラウザを自動で開く
+```
+
+使い方・オフラインでのFlask導入手順は [docs/admin_panel.md](docs/admin_panel.md)。
+
 ---
 
 ## solver に守ってほしい規約

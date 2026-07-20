@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SuperCon 管理画面</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ink: #12161d;
+      --ink-soft: #3a4250;
+      --paper: #f3f5f7;
+      --paper-raised: #ffffff;
+      --surface-alt: #eaeef2;
+      --line: #d7dde3;
+      --accent: #17766f;
+      --accent-strong: #0f5850;
+      --accent-tint: #e2f1ef;
+      --ok: #3f8a58;
+      --ok-tint: #e6f3ea;
+      --warn: #ad7a1e;
+      --warn-tint: #fbf1de;
+      --bad: #b14943;
+      --bad-tint: #fbeae9;
+      --shadow: 0 1px 2px rgba(18, 22, 29, .06), 0 8px 20px -12px rgba(18, 22, 29, .16);
+      --radius: 7px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #e8ecf1;
+        --ink-soft: #a9b3c1;
+        --paper: #14181f;
+        --paper-raised: #1b212b;
+        --surface-alt: #202834;
+        --line: #2b323d;
+        --accent: #4fbdb2;
+        --accent-strong: #7fd4cb;
+        --accent-tint: #16302d;
+        --ok: #6fbf8c;
+        --ok-tint: #16281d;
+        --warn: #d9a54a;
+        --warn-tint: #2e2415;
+        --bad: #e08c86;
+        --bad-tint: #2e1c1b;
+        --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 20px -12px rgba(0, 0, 0, .5);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "BIZ UDPGothic", "Yu Gothic UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, code, table, .metric, .status-pill, .empty, .timestamp, .eyebrow {
+      font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding: 1.25rem max(1.25rem, calc((100vw - 1320px) / 2)) 1.1rem;
+      background: var(--paper-raised);
+    }
+    .eyebrow {
+      display: flex; align-items: center; gap: .5em;
+      font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+      margin-bottom: .4rem;
+    }
+    .eyebrow::before { content: ""; width: .5em; height: .5em; border-radius: 50%; background: var(--accent); }
+    h1 { margin: 0; font-size: 1.3rem; letter-spacing: -.01em; }
+    .subtitle { margin: .3rem 0 0; color: var(--ink-soft); font-size: .84rem; }
+    main { max-width: 1320px; margin: 0 auto; padding: 1.5rem 1.25rem; }
+    .tabs { display: flex; gap: .2rem; overflow-x: auto; border-bottom: 1px solid var(--line); }
+    .tab {
+      flex: 0 0 auto; border: 0; border-bottom: 2px solid transparent; padding: .8rem 1rem;
+      color: var(--ink-soft); background: transparent; cursor: pointer; font-size: .88rem;
+      font-family: inherit; border-radius: 4px 4px 0 0; transition: color .12s ease, background .12s ease;
+    }
+    @media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
+    .tab:hover { color: var(--ink); background: var(--accent-tint); }
+    .tab[aria-selected="true"] { border-color: var(--accent); font-weight: 700; color: var(--ink); }
+    .panel { padding-top: 1.4rem; }
+    /* ユーティリティクラスなので、他の display 指定(.zip-preview の grid 等)より
+       常に優先されるよう !important にする(同じ詳細度では出現順で負けるため)。 */
+    .hidden { display: none !important; }
+    .summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .7rem; align-items: baseline; margin-bottom: 1.1rem; }
+    .summary h2, .section h3 { margin: 0; }
+    .summary h2 { font-size: 1.15rem; letter-spacing: -.005em; }
+    .timestamp { color: var(--ink-soft); font-size: .76rem; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: .8rem; margin-bottom: 1.4rem; }
+    .card, .section, .incumbent { border: 1px solid var(--line); background: var(--paper-raised); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .card { padding: .95rem 1.1rem; }
+    .card-label { color: var(--ink-soft); font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; }
+    .metric { margin-top: .3rem; font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+    .section { margin-top: 1.1rem; overflow-x: auto; }
+    .section h3 { padding: .85rem 1.1rem; font-size: .92rem; border-bottom: 1px solid var(--line); background: var(--accent-tint); border-radius: var(--radius) var(--radius) 0 0; color: var(--accent-strong); }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    th, td { text-align: left; padding: .68rem 1.1rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: var(--accent-tint); }
+    th { color: var(--ink-soft); font-weight: 600; white-space: nowrap; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; }
+    td { word-break: break-word; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: .4em; white-space: nowrap;
+      font-size: .74rem; letter-spacing: .02em; font-weight: 600;
+      padding: .2em .7em .22em; border-radius: 999px;
+    }
+    .status-pill::before { content: ""; width: .5em; height: .5em; border-radius: 50%; background: currentColor; flex: none; }
+    .status-idle, .status-stopped { background: var(--surface-alt); color: var(--ink-soft); }
+    .status-running { background: var(--accent-tint); color: var(--accent-strong); }
+    .status-stale { background: var(--warn-tint); color: var(--warn); }
+    .status-other { background: var(--surface-alt); color: var(--ink-soft); }
+    .empty { padding: 1.1rem; color: var(--ink-soft); }
+    .error { color: var(--bad); }
+    .incumbent { padding: 1.1rem; margin-top: 1.1rem; }
+    .incumbent h3 { margin: 0 0 .8rem; font-size: .92rem; color: var(--accent-strong); }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); font: .78rem/1.6 ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace; }
+    .coming-soon { padding: 2.5rem 1.1rem; color: var(--ink-soft); text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
+    .job-form { display: grid; gap: 1.1rem; max-width: 1000px; }
+    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .85rem; }
+    .form-field { display: grid; gap: .35rem; color: var(--ink-soft); font-size: .82rem; }
+    input, select, textarea, button { font: inherit; }
+    input, select, textarea {
+      width: 100%; border: 1px solid var(--line); border-radius: 5px; background: var(--paper-raised);
+      color: var(--ink); padding: .55rem .7rem; transition: border-color .12s ease;
+    }
+    @media (prefers-reduced-motion: reduce) { input, select, textarea { transition: none; } }
+    input:hover, select:hover, textarea:hover { border-color: var(--accent); }
+    textarea { min-height: 4.4rem; resize: vertical; font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: .85rem; }
+    .param-list { display: grid; gap: .75rem; padding: 0 1.1rem 1.1rem; }
+    .param-list:not(:empty) { padding-top: 1.1rem; }
+    .param-row { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(100px, .7fr) minmax(260px, 2fr) auto; gap: .6rem; align-items: end; padding: .8rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); }
+    .param-options { display: grid; grid-template-columns: repeat(2, minmax(80px, 1fr)) auto; gap: .55rem; align-items: end; }
+    .check-field { display: flex; align-items: center; gap: .4rem; min-height: 2.3rem; color: var(--ink); white-space: nowrap; }
+    .check-field input { width: auto; }
+    .button-row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+    .action {
+      border: 1px solid var(--accent); border-radius: 5px; background: var(--accent); color: #fff;
+      cursor: pointer; padding: .58rem .9rem; font-weight: 600; font-size: .85rem;
+      transition: background .12s ease, opacity .12s ease;
+    }
+    @media (prefers-reduced-motion: reduce) { .action { transition: none; } }
+    .action:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+    .action.secondary { background: transparent; color: var(--accent-strong); }
+    .action.secondary:hover:not(:disabled) { background: var(--accent-tint); }
+    .action.danger { border-color: var(--bad); background: transparent; color: var(--bad); }
+    .action.danger:hover:not(:disabled) { background: var(--bad-tint); }
+    .action:disabled { cursor: not-allowed; opacity: .45; }
+    .form-message { min-height: 1.3rem; color: var(--ink-soft); font-size: .88rem; }
+    .form-message.error { color: var(--bad); }
+    .eta {
+      padding: .9rem 1.1rem; background: var(--accent-tint); border: 1px solid var(--line);
+      border-radius: var(--radius); color: var(--accent-strong); font-weight: 600;
+    }
+    .zip-upload-content { display: grid; gap: .9rem; padding: 1.1rem; }
+    .zip-drop {
+      display: grid; place-items: center; min-height: 7.5rem; padding: 1rem; text-align: center;
+      border: 2px dashed var(--line); border-radius: var(--radius); background: var(--paper);
+      color: var(--ink-soft); cursor: pointer; transition: border-color .12s ease, background .12s ease;
+    }
+    .zip-drop:hover, .zip-drop.is-dragover { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-strong); }
+    @media (prefers-reduced-motion: reduce) { .zip-drop { transition: none; } }
+    .zip-preview { display: grid; gap: 1.1rem; }
+    @media (max-width: 600px) { .cards { grid-template-columns: repeat(2, 1fr); } main { padding: 1rem .85rem; } th, td { padding: .65rem .75rem; } }
+    @media (max-width: 760px) { .form-grid, .param-row { grid-template-columns: 1fr; } .param-options { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">kumako_cluster · admin panel</p>
+    <h1>SuperCon 管理画面</h1>
+    <p class="subtitle">localhost:8765 / このPCのブラウザからのみアクセスできます</p>
+  </header>
+  <main>
+    <nav class="tabs" role="tablist" aria-label="管理メニュー">
+      <button class="tab" role="tab" aria-selected="true" aria-controls="status-panel" id="status-tab">状態</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="jobs-panel" id="jobs-tab">ジョブ生成</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="search-panel" id="search-tab">探索</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="templates-panel" id="templates-tab">テンプレート</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="archive-panel" id="archive-tab">アーカイブ</button>
+    </nav>
+
+    <section class="panel" role="tabpanel" id="status-panel" aria-labelledby="status-tab">
+      <div class="summary"><h2>クラスタ状態</h2><span class="timestamp" id="last-updated">読み込み中…</span></div>
+      <div class="cards" aria-label="ジョブキュー">
+        <div class="card"><div class="card-label">pending</div><div class="metric" id="queue-pending">-</div></div>
+        <div class="card"><div class="card-label">running</div><div class="metric" id="queue-running">-</div></div>
+        <div class="card"><div class="card-label">done</div><div class="metric" id="queue-done">-</div></div>
+        <div class="card"><div class="card-label">failed</div><div class="metric" id="queue-failed">-</div></div>
+      </div>
+      <div id="status-sections"></div>
+      <section class="incumbent"><h3>Incumbent / Search best</h3><pre id="incumbent-data">読み込み中…</pre></section>
+    </section>
+    <section class="panel hidden" role="tabpanel" id="jobs-panel" aria-labelledby="jobs-tab">
+      <div class="summary"><h2>ジョブ生成</h2><span class="timestamp">範囲指定スイープ / ETA見積もり</span></div>
+      <div class="job-form" id="sweep-form">
+        <label class="form-field">コマンドテンプレート
+          <textarea id="sweep-command" placeholder="python solver.py --alpha __alpha__ --seed __seed__">python solver.py --alpha __alpha__ --seed __seed__</textarea>
+        </label>
+        <section class="section">
+          <h3>パラメータ</h3>
+          <div class="param-list" id="param-list"></div>
+          <div class="button-row" style="padding: .8rem 1rem;"><button class="action secondary" type="button" id="add-param">+ パラメータ追加</button></div>
+        </section>
+        <div class="form-grid">
+          <label class="form-field">件数<input id="sweep-count" type="number" min="1" value="10"></label>
+          <label class="form-field">timeout_sec<input id="sweep-timeout" type="number" min="0.001" step="any" value="30"></label>
+          <label class="form-field">job_id プレフィックス<input id="sweep-prefix" value="sweep"></label>
+          <label class="form-field">artifacts（カンマ区切り、任意）<input id="sweep-artifacts" placeholder="out/solution.txt"></label>
+          <div class="form-field">サンプリング方式
+            <div class="button-row"><label class="check-field"><input type="radio" name="sampling" value="random" checked>ランダム</label><label class="check-field"><input type="radio" name="sampling" value="grid">グリッド</label></div>
+          </div>
+        </div>
+        <div class="button-row"><button class="action secondary" type="button" id="preview-sweep">プレビュー</button><button class="action" type="button" id="submit-sweep" disabled>投入する</button><button class="action secondary" type="button" id="save-sweep-template">テンプレートとして保存</button></div>
+        <div class="form-message" id="sweep-message" role="status"></div>
+      </div>
+      <div id="sweep-preview" class="hidden">
+        <div class="eta" id="eta-result"></div>
+        <section class="section"><h3>生成予定ジョブ</h3><table><thead><tr><th>job_id</th><th>params</th><th>sweep_id</th></tr></thead><tbody id="sweep-preview-body"></tbody></table></section>
+      </div>
+      <section class="section" aria-labelledby="zip-upload-title">
+        <h3 id="zip-upload-title">手作りJSONのZIP投入</h3>
+        <div class="zip-upload-content">
+          <input class="hidden" id="zip-upload-file" type="file" accept=".zip">
+          <div class="zip-drop" id="zip-drop" role="button" tabindex="0" aria-describedby="zip-upload-message">ここにZIPファイルをドロップ、またはクリックして選択</div>
+          <div class="button-row"><button class="action" type="button" id="commit-zip" disabled>投入する</button></div>
+          <div class="form-message" id="zip-upload-message" role="status"></div>
+          <div class="zip-preview hidden" id="zip-preview">
+            <div class="eta" id="zip-eta-result"></div>
+            <section class="section"><h3>採用されるジョブ</h3><table><thead><tr><th>job_id</th><th>filename</th><th>timeout_sec</th></tr></thead><tbody id="zip-accepted-body"></tbody></table></section>
+            <section class="section"><h3>スキップされたファイル</h3><table><thead><tr><th>filename</th><th>理由</th></tr></thead><tbody id="zip-skipped-body"></tbody></table></section>
+          </div>
+        </div>
+      </section>
+    </section>
+    <section class="panel hidden" role="tabpanel" id="search-panel" aria-labelledby="search-tab">
+      <div class="summary"><h2>パラメータ探索</h2><span class="timestamp">Optuna bridge / 推奨設定</span></div>
+      <div class="job-form" id="search-form">
+        <label class="form-field">コマンドテンプレート
+          <textarea id="search-command" placeholder="python solver.py --alpha __alpha__ --seed __seed__">python solver.py --alpha __alpha__ --seed __seed__</textarea>
+        </label>
+        <section class="section">
+          <h3>パラメータ</h3>
+          <div class="param-list" id="search-param-list"></div>
+          <div class="button-row" style="padding: .8rem 1rem;"><button class="action secondary" type="button" id="add-search-param">+ パラメータ追加</button></div>
+        </section>
+        <div class="form-grid">
+          <label class="form-field">探索名(name)<input id="search-name" placeholder="alpha-search"></label>
+          <label class="form-field">timeout_sec<input id="search-timeout" type="number" min="0.001" step="any" value="60"></label>
+          <label class="form-field">開始seed<input id="search-seed-start" type="number" step="1" value="1"></label>
+          <label class="form-field">終了seed<input id="search-seed-end" type="number" step="1" value="5"></label>
+          <label class="form-field">max_trials<input id="search-max-trials" type="number" min="1" step="1" value="200"></label>
+          <label class="form-field">parallel<input id="search-parallel" type="number" min="1" step="1" value="32"></label>
+          <label class="form-field">agg
+            <select id="search-agg"><option value="mean" selected>mean</option><option value="min">min</option><option value="max">max</option></select>
+          </label>
+          <div class="form-field">direction
+            <div class="button-row"><label class="check-field"><input type="radio" name="search-direction" value="max" checked>max</label><label class="check-field"><input type="radio" name="search-direction" value="min">min</label></div>
+          </div>
+        </div>
+        <div class="button-row"><button class="action" type="button" id="launch-search">起動する</button><button class="action secondary" type="button" id="save-search-template">テンプレートとして保存</button></div>
+        <div class="form-message" id="search-message" role="status"></div>
+      </div>
+      <section class="section" aria-labelledby="search-list-title">
+        <h3 id="search-list-title">探索一覧</h3>
+        <div id="search-list" class="empty">読み込み中…</div>
+      </section>
+    </section>
+    <section class="panel hidden" role="tabpanel" id="templates-panel" aria-labelledby="templates-tab">
+      <div class="summary"><h2>テンプレート</h2><span class="timestamp">保存した入力内容を再利用できます</span></div>
+      <div class="form-message" id="templates-message" role="status"></div>
+      <section class="section"><h3>スイープ</h3><div id="sweep-templates" class="empty">読み込み中…</div></section>
+      <section class="section"><h3>探索</h3><div id="search-templates" class="empty">読み込み中…</div></section>
+    </section>
+    <section class="panel hidden" role="tabpanel" id="archive-panel" aria-labelledby="archive-tab">
+      <div class="summary"><h2>結果アーカイブ</h2><span class="timestamp">完了・失敗ジョブと結果を archive/ へ移動します</span></div>
+      <div class="job-form">
+        <label class="form-field">ラベル（任意）<input id="archive-label" placeholder="20260720-final"></label>
+        <div class="button-row"><button class="action" type="button" id="archive-results">今すぐアーカイブする</button></div>
+        <div class="form-message" id="archive-message" role="status"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    "use strict";
+    const sectionNames = { workers: "Workers", supervisors: "Supervisors", launchers: "Launchers", bridges: "Search bridges" };
+    const statusSections = document.getElementById("status-sections");
+
+    function text(value) { return value === null || value === undefined || value === "" ? "-" : String(value); }
+    function statusClass(status) {
+      return ["idle", "running", "stopped", "stale"].includes(status) ? "status-" + status : "status-other";
+    }
+    function makeCell(value) { const td = document.createElement("td"); td.textContent = text(value); return td; }
+    function renderStatus(groups) {
+      statusSections.replaceChildren();
+      for (const [key, title] of Object.entries(sectionNames)) {
+        const section = document.createElement("section"); section.className = "section";
+        const heading = document.createElement("h3"); heading.textContent = title; section.append(heading);
+        const rows = Array.isArray(groups[key]) ? groups[key] : [];
+        if (!rows.length) {
+          const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "状態ファイルはありません。"; section.append(empty);
+        } else {
+          const table = document.createElement("table");
+          table.innerHTML = "<thead><tr><th>worker</th><th>status</th><th>current job</th><th>updated at</th><th>age</th><th>message</th></tr></thead>";
+          const body = document.createElement("tbody");
+          for (const row of rows) {
+            const tr = document.createElement("tr"); tr.append(makeCell(row.worker));
+            const status = document.createElement("td"), pill = document.createElement("span");
+            pill.className = "status-pill " + statusClass(row.status); pill.textContent = text(row.status); status.append(pill); tr.append(status);
+            tr.append(makeCell(row.current_job), makeCell(row.updated_at), makeCell(row.age_sec === null ? null : text(row.age_sec) + " s"), makeCell(row.message));
+            body.append(tr);
+          }
+          table.append(body); section.append(table);
+        }
+        statusSections.append(section);
+      }
+    }
+    function renderConnectionError() {
+      statusSections.replaceChildren();
+      const message = document.createElement("div"); message.className = "empty error"; message.textContent = "接続できません。再試行しています…"; statusSections.append(message);
+    }
+    async function getJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return response.json();
+    }
+    const paramList = document.getElementById("param-list");
+    const searchParamList = document.getElementById("search-param-list");
+    const sweepPreview = document.getElementById("sweep-preview");
+    const sweepMessage = document.getElementById("sweep-message");
+    const submitSweep = document.getElementById("submit-sweep");
+    const searchMessage = document.getElementById("search-message");
+    const searchList = document.getElementById("search-list");
+    const archiveLabel = document.getElementById("archive-label");
+    const archiveButton = document.getElementById("archive-results");
+    const archiveMessage = document.getElementById("archive-message");
+    const templatesMessage = document.getElementById("templates-message");
+    const sweepTemplates = document.getElementById("sweep-templates");
+    const searchTemplates = document.getElementById("search-templates");
+    const zipInput = document.getElementById("zip-upload-file");
+    const zipDrop = document.getElementById("zip-drop");
+    const zipPreview = document.getElementById("zip-preview");
+    const zipMessage = document.getElementById("zip-upload-message");
+    const commitZip = document.getElementById("commit-zip");
+    let previewPayload = null;
+    let uploadFile = null;
+    let uploadPreviewReady = false;
+    let uploadRequestId = 0;
+
+    function setSweepMessage(message, isError) {
+      sweepMessage.textContent = message;
+      sweepMessage.classList.toggle("error", Boolean(isError));
+    }
+    function invalidatePreview() {
+      previewPayload = null;
+      submitSweep.disabled = true;
+    }
+    function renderParamOptions(row) {
+      const type = row.querySelector(".param-type").value;
+      const details = row.querySelector(".param-options");
+      details.replaceChildren();
+      if (type === "cat") {
+        const label = document.createElement("label"); label.className = "form-field"; label.textContent = "choices（カンマ区切り）";
+        const input = document.createElement("input"); input.className = "param-choices"; input.placeholder = "a, b"; label.append(input); details.append(label);
+      } else {
+        for (const [labelText, className, value] of [["low", "param-low", "0"], ["high", "param-high", "1"]]) {
+          const label = document.createElement("label"); label.className = "form-field"; label.textContent = labelText;
+          const input = document.createElement("input"); input.type = "number"; input.step = "any"; input.className = className; input.value = value; label.append(input); details.append(label);
+        }
+        const logLabel = document.createElement("label"); logLabel.className = "check-field";
+        const check = document.createElement("input"); check.type = "checkbox"; check.className = "param-log"; logLabel.append(check, document.createTextNode("log")); details.append(logLabel);
+      }
+    }
+    function addParam() {
+      const row = document.createElement("div"); row.className = "param-row";
+      const nameLabel = document.createElement("label"); nameLabel.className = "form-field"; nameLabel.textContent = "名前";
+      const name = document.createElement("input"); name.className = "param-name"; name.placeholder = "alpha"; nameLabel.append(name);
+      const typeLabel = document.createElement("label"); typeLabel.className = "form-field"; typeLabel.textContent = "type";
+      const type = document.createElement("select"); type.className = "param-type";
+      for (const value of ["float", "int", "cat"]) { const option = document.createElement("option"); option.value = value; option.textContent = value; type.append(option); }
+      typeLabel.append(type);
+      const details = document.createElement("div"); details.className = "param-options";
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "action danger"; remove.textContent = "削除";
+      remove.addEventListener("click", () => { row.remove(); invalidatePreview(); });
+      type.addEventListener("change", () => { renderParamOptions(row); invalidatePreview(); });
+      row.append(nameLabel, typeLabel, details, remove); paramList.append(row); renderParamOptions(row); invalidatePreview();
+    }
+    function addSearchParam() {
+      const row = document.createElement("div"); row.className = "param-row";
+      const nameLabel = document.createElement("label"); nameLabel.className = "form-field"; nameLabel.textContent = "名前";
+      const name = document.createElement("input"); name.className = "param-name"; name.placeholder = "alpha"; nameLabel.append(name);
+      const typeLabel = document.createElement("label"); typeLabel.className = "form-field"; typeLabel.textContent = "type";
+      const type = document.createElement("select"); type.className = "param-type";
+      for (const value of ["float", "int", "cat"]) { const option = document.createElement("option"); option.value = value; option.textContent = value; type.append(option); }
+      typeLabel.append(type);
+      const details = document.createElement("div"); details.className = "param-options";
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "action danger"; remove.textContent = "削除";
+      remove.addEventListener("click", () => row.remove());
+      type.addEventListener("change", () => renderParamOptions(row));
+      row.append(nameLabel, typeLabel, details, remove); searchParamList.append(row); renderParamOptions(row);
+    }
+    function readSweepPayload() {
+      const command = document.getElementById("sweep-command").value.trim().split(/\s+/).filter(Boolean);
+      if (!command.length) throw new Error("コマンドテンプレートを入力してください。");
+      const params = {};
+      for (const row of paramList.querySelectorAll(".param-row")) {
+        const name = row.querySelector(".param-name").value.trim();
+        const type = row.querySelector(".param-type").value;
+        if (!name) throw new Error("各パラメータに名前を入力してください。");
+        if (Object.prototype.hasOwnProperty.call(params, name)) throw new Error("パラメータ名が重複しています: " + name);
+        if (type === "cat") {
+          const choices = row.querySelector(".param-choices").value.split(",").map((item) => item.trim()).filter(Boolean);
+          if (!choices.length) throw new Error(name + " の choices を1件以上入力してください。");
+          params[name] = { type, choices };
+        } else {
+          const low = Number(row.querySelector(".param-low").value), high = Number(row.querySelector(".param-high").value);
+          if (!Number.isFinite(low) || !Number.isFinite(high) || low >= high) throw new Error(name + " の low/high を正しく入力してください。");
+          params[name] = { type, low, high, log: row.querySelector(".param-log").checked };
+        }
+      }
+      const count = Number(document.getElementById("sweep-count").value);
+      const timeoutSec = Number(document.getElementById("sweep-timeout").value);
+      if (!Number.isInteger(count) || count < 1) throw new Error("件数は1以上の整数にしてください。");
+      if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) throw new Error("timeout_sec は0より大きくしてください。");
+      const prefix = document.getElementById("sweep-prefix").value.trim();
+      if (!/^[A-Za-z0-9_.-]+$/.test(prefix)) throw new Error("job_id プレフィックスは英数字・._- のみで入力してください。");
+      const artifacts = document.getElementById("sweep-artifacts").value.split(",").map((item) => item.trim()).filter(Boolean);
+      return { command, params, count, sampling: document.querySelector('input[name="sampling"]:checked').value, timeout_sec: timeoutSec, artifacts, prefix, seed: null };
+    }
+    function readSearchPayload() {
+      const command = document.getElementById("search-command").value.trim().split(/\s+/).filter(Boolean);
+      if (!command.length) throw new Error("コマンドテンプレートを入力してください。");
+      const params = {};
+      for (const row of searchParamList.querySelectorAll(".param-row")) {
+        const name = row.querySelector(".param-name").value.trim();
+        const type = row.querySelector(".param-type").value;
+        if (!name) throw new Error("各パラメータに名前を入力してください。");
+        if (Object.prototype.hasOwnProperty.call(params, name)) throw new Error("パラメータ名が重複しています: " + name);
+        if (type === "cat") {
+          const choices = row.querySelector(".param-choices").value.split(",").map((item) => item.trim()).filter(Boolean);
+          if (!choices.length) throw new Error(name + " の choices を1件以上入力してください。");
+          params[name] = { type, choices };
+        } else {
+          const low = Number(row.querySelector(".param-low").value), high = Number(row.querySelector(".param-high").value);
+          if (!Number.isFinite(low) || !Number.isFinite(high) || low >= high) throw new Error(name + " の low/high を正しく入力してください。");
+          params[name] = { type, low, high, log: row.querySelector(".param-log").checked };
+        }
+      }
+      if (!Object.keys(params).length) throw new Error("パラメータを1つ以上追加してください。");
+      const name = document.getElementById("search-name").value.trim();
+      if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("探索名は英数字・ハイフン・アンダースコアのみで入力してください。");
+      const timeoutSec = Number(document.getElementById("search-timeout").value);
+      const start = Number(document.getElementById("search-seed-start").value), end = Number(document.getElementById("search-seed-end").value);
+      const maxTrials = Number(document.getElementById("search-max-trials").value), parallel = Number(document.getElementById("search-parallel").value);
+      if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) throw new Error("timeout_sec は0より大きくしてください。");
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end) throw new Error("開始seed・終了seedを正しい整数範囲で入力してください。");
+      if (!Number.isSafeInteger(maxTrials) || maxTrials < 1) throw new Error("max_trials は1以上の整数にしてください。");
+      if (!Number.isSafeInteger(parallel) || parallel < 1) throw new Error("parallel は1以上の整数にしてください。");
+      const instances = [];
+      for (let seed = start; seed <= end; seed += 1) instances.push(seed);
+      return {
+        name, command, params, instances, timeout_sec: timeoutSec, max_trials: maxTrials, parallel,
+        agg: document.getElementById("search-agg").value,
+        direction: document.querySelector('input[name="search-direction"]:checked').value,
+      };
+    }
+    async function postJson(url, payload) {
+      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
+      return data;
+    }
+    async function postFile(url, file) {
+      const form = new FormData(); form.append("file", file);
+      const response = await fetch(url, { method: "POST", body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
+      return data;
+    }
+    function setTemplatesMessage(message, isError) {
+      templatesMessage.textContent = message;
+      templatesMessage.classList.toggle("error", Boolean(isError));
+    }
+    function setRadioValue(name, value) {
+      const input = document.querySelector('input[name="' + name + '"][value="' + value + '"]');
+      if (!input) throw new Error("テンプレートの " + name + " を復元できません。");
+      input.checked = true;
+    }
+    function setSelectValue(id, value) {
+      const select = document.getElementById(id);
+      if (!Array.from(select.options).some((option) => option.value === value)) {
+        throw new Error("テンプレートの " + id + " を復元できません。");
+      }
+      select.value = value;
+    }
+    function commandText(payload) {
+      if (!Array.isArray(payload.command) || !payload.command.every((part) => typeof part === "string")) {
+        throw new Error("テンプレートの command を復元できません。");
+      }
+      return payload.command.join(" ");
+    }
+    function restoreParams(paramContainer, params, addRow) {
+      for (const row of paramContainer.querySelectorAll(".param-row")) row.remove();
+      if (!params || typeof params !== "object" || Array.isArray(params)) {
+        throw new Error("テンプレートの params を復元できません。");
+      }
+      for (const [name, spec] of Object.entries(params)) {
+        if (!spec || typeof spec !== "object" || !["float", "int", "cat"].includes(spec.type)) {
+          throw new Error("パラメータ " + name + " を復元できません。");
+        }
+        addRow();
+        const row = paramContainer.lastElementChild;
+        row.querySelector(".param-name").value = name;
+        const type = row.querySelector(".param-type");
+        type.value = spec.type;
+        type.dispatchEvent(new Event("change", { bubbles: true }));
+        if (spec.type === "cat") {
+          if (!Array.isArray(spec.choices)) throw new Error("パラメータ " + name + " の choices を復元できません。");
+          row.querySelector(".param-choices").value = spec.choices.join(", ");
+        } else {
+          row.querySelector(".param-low").value = spec.low ?? "";
+          row.querySelector(".param-high").value = spec.high ?? "";
+          row.querySelector(".param-log").checked = Boolean(spec.log);
+        }
+      }
+    }
+    function restoreSweepTemplate(payload) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("テンプレートの内容を復元できません。");
+      document.getElementById("sweep-command").value = commandText(payload);
+      document.getElementById("sweep-count").value = payload.count ?? "";
+      document.getElementById("sweep-timeout").value = payload.timeout_sec ?? "";
+      document.getElementById("sweep-prefix").value = payload.prefix ?? "";
+      document.getElementById("sweep-artifacts").value = Array.isArray(payload.artifacts) ? payload.artifacts.join(", ") : "";
+      setRadioValue("sampling", payload.sampling);
+      restoreParams(paramList, payload.params, addParam);
+      invalidatePreview();
+    }
+    function restoreSearchTemplate(payload) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("テンプレートの内容を復元できません。");
+      if (!Array.isArray(payload.instances) || !payload.instances.length || !payload.instances.every(Number.isFinite)) {
+        throw new Error("テンプレートの instances を復元できません。");
+      }
+      document.getElementById("search-command").value = commandText(payload);
+      document.getElementById("search-name").value = payload.name ?? "";
+      document.getElementById("search-timeout").value = payload.timeout_sec ?? "";
+      document.getElementById("search-seed-start").value = Math.min(...payload.instances);
+      document.getElementById("search-seed-end").value = Math.max(...payload.instances);
+      document.getElementById("search-max-trials").value = payload.max_trials ?? "";
+      document.getElementById("search-parallel").value = payload.parallel ?? "";
+      setSelectValue("search-agg", payload.agg);
+      setRadioValue("search-direction", payload.direction);
+      restoreParams(searchParamList, payload.params, addSearchParam);
+    }
+    function loadTemplate(template) {
+      const kind = template && template.kind;
+      const message = kind === "sweep" ? setSweepMessage : setSearchMessage;
+      try {
+        if (kind === "sweep") {
+          activateTab(document.getElementById("jobs-tab"));
+          restoreSweepTemplate(template.payload);
+        } else if (kind === "search") {
+          activateTab(document.getElementById("search-tab"));
+          restoreSearchTemplate(template.payload);
+        } else {
+          throw new Error("テンプレート種別を読み込めません。");
+        }
+        message('テンプレート "' + template.name + '" を読み込みました。', false);
+      } catch (error) {
+        message(error.message || "テンプレートを読み込めません。", true);
+      }
+    }
+    function renderTemplateList(container, templates, kind) {
+      container.replaceChildren();
+      container.className = "";
+      const matching = templates.filter((template) => template && template.kind === kind);
+      if (!matching.length) {
+        container.className = "empty";
+        container.textContent = "保存済みテンプレートはありません。";
+        return;
+      }
+      const table = document.createElement("table");
+      table.innerHTML = "<thead><tr><th>名前</th><th>保存日時</th><th>読み込む</th><th>削除</th></tr></thead>";
+      const body = document.createElement("tbody");
+      for (const template of matching) {
+        const row = document.createElement("tr");
+        row.append(makeCell(template.name), makeCell(template.saved_at));
+        const loadCell = document.createElement("td");
+        const load = document.createElement("button"); load.type = "button"; load.className = "action secondary"; load.textContent = "読み込む";
+        load.addEventListener("click", () => loadTemplate(template)); loadCell.append(load); row.append(loadCell);
+        const deleteCell = document.createElement("td");
+        const remove = document.createElement("button"); remove.type = "button"; remove.className = "action danger"; remove.textContent = "削除";
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          try {
+            await postJson("/api/templates/delete", { kind: template.kind, name: template.name });
+            await refreshTemplates();
+          } catch (error) {
+            remove.disabled = false;
+            setTemplatesMessage(error.message || "テンプレートを削除できません。", true);
+          }
+        });
+        deleteCell.append(remove); row.append(deleteCell); body.append(row);
+      }
+      table.append(body); container.append(table);
+    }
+    async function refreshTemplates() {
+      try {
+        const data = await getJson("/api/templates/list");
+        const templates = Array.isArray(data.templates) ? data.templates : [];
+        renderTemplateList(sweepTemplates, templates, "sweep");
+        renderTemplateList(searchTemplates, templates, "search");
+      } catch (error) {
+        setTemplatesMessage(error.message || "テンプレート一覧を取得できません。", true);
+      }
+    }
+    async function saveTemplate(kind) {
+      const name = window.prompt("テンプレート名を入力してください。");
+      if (name === null || !name.trim()) return;
+      try {
+        const payload = kind === "sweep" ? readSweepPayload() : readSearchPayload();
+        await postJson("/api/templates/save", { kind, name: name.trim(), payload });
+        const message = 'テンプレート "' + name.trim() + '" を保存しました。';
+        (kind === "sweep" ? setSweepMessage : setSearchMessage)(message, false);
+        await refreshTemplates();
+      } catch (error) {
+        (kind === "sweep" ? setSweepMessage : setSearchMessage)(error.message || "テンプレートを保存できません。", true);
+      }
+    }
+    function formatEta(seconds) {
+      const totalMinutes = Math.max(0, Math.ceil((Number(seconds) || 0) / 60));
+      const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
+      return "約" + hours + "時間" + minutes + "分";
+    }
+    function formatParams(params) {
+      const rounded = {};
+      for (const [key, value] of Object.entries(params || {})) {
+        rounded[key] = typeof value === "number" ? Math.round(value * 1e4) / 1e4 : value;
+      }
+      return JSON.stringify(rounded);
+    }
+    function renderSweepPreview(data) {
+      const body = document.getElementById("sweep-preview-body"); body.replaceChildren();
+      for (const job of data.jobs || []) {
+        const row = document.createElement("tr"); row.append(makeCell(job.job_id), makeCell(formatParams(job.params)), makeCell(job.sweep_id)); body.append(row);
+      }
+      const eta = data.eta || {};
+      document.getElementById("eta-result").textContent = formatEta(eta.eta_seconds) + "（根拠: " + (eta.basis === "measured" ? "実測平均" : "timeout基準") + "、稼働スロット" + text(eta.slots) + "台）";
+      sweepPreview.classList.remove("hidden");
+    }
+    function setZipMessage(message, isError) {
+      zipMessage.textContent = message;
+      zipMessage.classList.toggle("error", Boolean(isError));
+    }
+    function invalidateZipPreview() {
+      uploadPreviewReady = false;
+      commitZip.disabled = true;
+      zipPreview.classList.add("hidden");
+    }
+    function renderZipPreview(data) {
+      const accepted = Array.isArray(data.accepted) ? data.accepted : [];
+      const skipped = Array.isArray(data.skipped) ? data.skipped : [];
+      const acceptedBody = document.getElementById("zip-accepted-body"); acceptedBody.replaceChildren();
+      for (const job of accepted) {
+        const row = document.createElement("tr"); row.append(makeCell(job.job_id), makeCell(job.filename), makeCell(job.timeout_sec)); acceptedBody.append(row);
+      }
+      const skippedBody = document.getElementById("zip-skipped-body"); skippedBody.replaceChildren();
+      for (const item of skipped) {
+        const row = document.createElement("tr"); row.append(makeCell(item.filename), makeCell(item.reason)); skippedBody.append(row);
+      }
+      const eta = data.eta || {};
+      document.getElementById("zip-eta-result").textContent = formatEta(eta.eta_seconds) + "（平均timeout_sec " + text(eta.seconds_per_job) + "秒、稼働スロット" + text(eta.slots) + "台）";
+      zipPreview.classList.remove("hidden");
+      setZipMessage("採用 " + accepted.length + "件・スキップ " + skipped.length + "件", false);
+    }
+    function setSearchMessage(message, isError) {
+      searchMessage.textContent = message;
+      searchMessage.classList.toggle("error", Boolean(isError));
+    }
+    function setArchiveMessage(message, isError) {
+      archiveMessage.textContent = message;
+      archiveMessage.classList.toggle("error", Boolean(isError));
+    }
+    function searchStatus(search) {
+      const progress = search && search.progress;
+      return progress && typeof progress.status === "string" ? progress.status : "stopped";
+    }
+    function renderSearchList(data) {
+      searchList.replaceChildren();
+      searchList.classList.remove("empty");
+      const searches = Array.isArray(data.searches) ? data.searches : [];
+      if (!searches.length) {
+        searchList.classList.add("empty"); searchList.textContent = "探索はまだありません。"; return;
+      }
+      const table = document.createElement("table");
+      table.innerHTML = "<thead><tr><th>探索名</th><th>状態</th><th>進捗</th><th>ベストスコア</th><th>操作</th><th>Dashboard</th></tr></thead>";
+      const body = document.createElement("tbody");
+      for (const search of searches) {
+        const row = document.createElement("tr"); row.append(makeCell(search.name));
+        const statusCell = document.createElement("td"), pill = document.createElement("span");
+        const status = searchStatus(search); pill.className = "status-pill " + statusClass(status); pill.textContent = status; statusCell.append(pill); row.append(statusCell);
+        row.append(makeCell(search.progress && search.progress.message));
+        const best = search.best;
+        row.append(makeCell(best && typeof best === "object" ? "score: " + text(best.score) + "\nparams: " + formatParams(best.params) : null));
+        const actionCell = document.createElement("td");
+        const stop = document.createElement("button"); stop.type = "button"; stop.className = "action danger"; stop.textContent = "停止";
+        stop.disabled = !search.stoppable;
+        if (search.stoppable) {
+          stop.addEventListener("click", async () => {
+            stop.disabled = true;
+            try {
+              await postJson("/api/search/stop", { name: search.name });
+              setSearchMessage(search.name + " を停止しました。", false);
+              await refreshSearch();
+            } catch (error) {
+              stop.disabled = false;
+              setSearchMessage(error.message || "探索の停止に失敗しました。", true);
+            }
+          });
+        }
+        actionCell.append(stop);
+        if (!search.stoppable) {
+          const note = document.createElement("div"); note.className = "timestamp";
+          note.textContent = "このパネルからは停止できません(control/stop_all を使ってください)";
+          actionCell.append(note);
+        }
+        row.append(actionCell);
+        const dashboardCell = document.createElement("td");
+        if (search.has_journal) {
+          const dashboard = document.createElement("button"); dashboard.type = "button"; dashboard.className = "action secondary"; dashboard.textContent = "Dashboardを開く";
+          dashboard.addEventListener("click", async () => {
+            dashboard.disabled = true;
+            try {
+              const data = await postJson("/api/optuna-dashboard/launch", { name: search.name });
+              window.open(data.url, "_blank");
+            } catch (error) {
+              setSearchMessage(error.message || "Dashboardを起動できません。", true);
+            } finally {
+              dashboard.disabled = false;
+            }
+          });
+          dashboardCell.append(dashboard);
+        } else {
+          const note = document.createElement("span"); note.className = "timestamp";
+          note.textContent = "(builtinエンジンのため利用不可)"; dashboardCell.append(note);
+        }
+        row.append(dashboardCell); body.append(row);
+      }
+      table.append(body); searchList.append(table);
+    }
+    function renderSearchConnectionError() {
+      searchList.replaceChildren(); searchList.className = "empty error"; searchList.textContent = "探索一覧を取得できません。再試行しています…";
+    }
+    async function refreshSearch() {
+      try {
+        renderSearchList(await getJson("/api/search/list"));
+      } catch (error) {
+        renderSearchConnectionError();
+      }
+    }
+    async function previewZipFile(file) {
+      const requestId = ++uploadRequestId;
+      uploadFile = file;
+      invalidateZipPreview();
+      setZipMessage("ZIPを検証しています…", false);
+      try {
+        const data = await postFile("/api/jobs/upload-zip/preview", file);
+        if (requestId !== uploadRequestId) return;
+        renderZipPreview(data);
+        uploadPreviewReady = true;
+        commitZip.disabled = false;
+      } catch (error) {
+        if (requestId !== uploadRequestId) return;
+        setZipMessage(error.message || "ZIPの検証に失敗しました。", true);
+      }
+    }
+    document.getElementById("add-param").addEventListener("click", addParam);
+    document.getElementById("add-search-param").addEventListener("click", addSearchParam);
+    document.getElementById("save-sweep-template").addEventListener("click", () => saveTemplate("sweep"));
+    document.getElementById("save-search-template").addEventListener("click", () => saveTemplate("search"));
+    document.getElementById("sweep-form").addEventListener("input", invalidatePreview);
+    document.getElementById("sweep-form").addEventListener("change", invalidatePreview);
+    document.getElementById("preview-sweep").addEventListener("click", async () => {
+      try {
+        const payload = readSweepPayload(); setSweepMessage("プレビューを生成しています…", false); submitSweep.disabled = true;
+        const data = await postJson("/api/sweep/preview", payload);
+        previewPayload = { ...payload, seed: data.seed }; renderSweepPreview(data); submitSweep.disabled = false;
+        setSweepMessage("要求 " + data.requested_count + " 件、実際に " + data.actual_count + " 件を生成します。", false);
+      } catch (error) { invalidatePreview(); setSweepMessage(error.message || "プレビューの生成に失敗しました。", true); }
+    });
+    submitSweep.addEventListener("click", async () => {
+      if (!previewPayload) return;
+      try {
+        submitSweep.disabled = true; setSweepMessage("ジョブを投入しています…", false);
+        const data = await postJson("/api/sweep/submit", previewPayload);
+        previewPayload = null; setSweepMessage(data.count + "件投入しました。状態タブのキュー件数は自動更新されます。", false);
+        refresh();
+      } catch (error) { setSweepMessage(error.message || "ジョブの投入に失敗しました。", true); }
+    });
+    document.getElementById("launch-search").addEventListener("click", async () => {
+      try {
+        const payload = readSearchPayload();
+        setSearchMessage("探索を起動しています…", false);
+        const data = await postJson("/api/search/launch", payload);
+        setSearchMessage(data.name + " を起動しました。", false);
+        await refreshSearch();
+      } catch (error) {
+        setSearchMessage(error.message || "探索の起動に失敗しました。", true);
+      }
+    });
+    archiveButton.addEventListener("click", async () => {
+      archiveButton.disabled = true;
+      setArchiveMessage("アーカイブ中…", false);
+      try {
+        const label = archiveLabel.value.trim();
+        const data = await postJson("/api/archive", label ? { label } : {});
+        if (data.archived_to) {
+          setArchiveMessage(
+            "アーカイブしました: " + data.archived_to + " (done " + data.done + "件、failed " + data.failed + "件、result-dirs " + data.result_dirs + "件)",
+            false
+          );
+        } else {
+          setArchiveMessage(data.raw_output || "アーカイブ処理は完了しました。", false);
+        }
+        refresh();
+      } catch (error) {
+        setArchiveMessage(error.message || "アーカイブに失敗しました。", true);
+      } finally {
+        archiveButton.disabled = false;
+      }
+    });
+    zipDrop.addEventListener("click", () => zipInput.click());
+    zipDrop.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); zipInput.click(); }
+    });
+    zipInput.addEventListener("change", () => {
+      const file = zipInput.files && zipInput.files[0];
+      if (file) previewZipFile(file);
+    });
+    for (const eventName of ["dragenter", "dragover"]) {
+      zipDrop.addEventListener(eventName, (event) => { event.preventDefault(); zipDrop.classList.add("is-dragover"); });
+    }
+    for (const eventName of ["dragleave", "drop"]) {
+      zipDrop.addEventListener(eventName, (event) => { event.preventDefault(); zipDrop.classList.remove("is-dragover"); });
+    }
+    zipDrop.addEventListener("drop", (event) => {
+      const file = event.dataTransfer && event.dataTransfer.files[0];
+      if (file) previewZipFile(file);
+    });
+    commitZip.addEventListener("click", async () => {
+      if (!uploadPreviewReady || !uploadFile) return;
+      try {
+        commitZip.disabled = true; setZipMessage("ジョブを投入しています…", false);
+        const data = await postFile("/api/jobs/upload-zip/commit", uploadFile);
+        uploadPreviewReady = false;
+        setZipMessage(data.created.length + "件投入しました。", false);
+        refresh();
+      } catch (error) {
+        commitZip.disabled = false;
+        setZipMessage(error.message || "ジョブの投入に失敗しました。", true);
+      }
+    });
+    async function refresh() {
+      try {
+        const [status, queue, incumbent] = await Promise.all([getJson("/api/status"), getJson("/api/queue"), getJson("/api/incumbent")]);
+        renderStatus(status);
+        for (const key of ["pending", "running", "done", "failed"]) document.getElementById("queue-" + key).textContent = text(queue[key]);
+        document.getElementById("incumbent-data").textContent = JSON.stringify(incumbent, null, 2);
+        document.getElementById("last-updated").textContent = "updated " + new Date().toLocaleTimeString();
+      } catch (error) {
+        renderConnectionError();
+        document.getElementById("last-updated").textContent = "接続エラー";
+      }
+      try {
+        await refreshSearch();
+      } catch (error) {
+        // refreshSearch keeps polling failures confined to the search panel.
+      }
+    }
+    function activateTab(tab) {
+      document.querySelectorAll(".tab").forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+      document.querySelectorAll(".panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== tab.getAttribute("aria-controls")));
+      if (tab.id === "templates-tab") refreshTemplates();
+    }
+    document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => activateTab(tab)));
+    refresh();
+    refreshTemplates();
+    window.setInterval(refresh, 3000);
+  </script>
+</body>
+</html>
