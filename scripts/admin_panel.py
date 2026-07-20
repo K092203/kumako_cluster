@@ -654,7 +654,7 @@ def api_search_launch() -> Response | tuple[Response, int]:
             return jsonify({"error": f"探索プロセスを起動できません: {error}"}), 500
         _search_processes[name] = proc
 
-    return jsonify({"name": name, "started": True, "spec_path": str(spec_path.relative_to(root))})
+    return jsonify({"name": name, "started": True, "spec_path": spec_path.relative_to(root).as_posix()})
 
 
 @app.post("/api/search/stop")
