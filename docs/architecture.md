@@ -160,6 +160,26 @@ outcome は次のいずれか:
 
 `control/stop_all` を置けば全ワーカー・全ブリッジが安全に停止する。
 
+### SMBハング対策(ハートビート隔離)
+
+2026-07のリハーサルで、280スロットの負荷下で複数の launcher/supervisor が
+status 書き込み(SMB I/O)で無限ハングし、そのまま `control/stop_all` の監視まで
+止まる障害が起きた。Python の同期I/Oは割り込めないため、`try/except` では
+救えない。[_ioutil.py](../scripts/_ioutil.py) がハングしうるI/Oを別スレッドへ
+隔離する3つの部品を提供する:
+
+- `StatusHeartbeat`: status書き込み専用の背景スレッド。`update()` はメモリ上の
+  最新payloadを差し替えるだけで即返り、実際のSMB書き込みは背景スレッドが行うため
+  書き込みがハングしても制御ループは止まらない
+- `call_with_timeout` / `SingleFlightTimeout`: `control/*.stop` のような
+  ポーリングファイルの存在確認をタイムアウト付きで実行し、ハング中の呼び出しが
+  同じキーで際限なく増殖しないようにする
+
+`worker.py`(status更新・`should_stop`)・`supervise_slots.py`(`should_stop`)・
+`launcher_agent.py`(`should_stop`・`read_start_request`)に適用済み。
+ハングしたスレッドは daemon のまま放置され、SMB復帰時は自然終了し、
+復帰しなくてもプロセスの応答性は損なわれない。
+
 ---
 
 ## 6. 結果の集計
@@ -276,3 +296,10 @@ make_job / optuna_bridge
 - **GPU 非活用**: 2026年の富岳はCPU(A64FX)。ローカルPCのGPU(RX 6300)も使わない
 - **x86 と A64FX の性能差**: ローカルでの実行時間は富岳と相関しない。だから時間計測を
   せず、スコアと正しさだけを収穫する設計にしている
+- **`claim_job` / `copy_repo_snapshot` はSMBハング対策(§5)の対象外**: `worker.py` の
+  status更新・`should_stop` は上記ハートビート隔離済みだが、pending取得の
+  `os.replace` 自体とスナップショット同期は同期I/Oのまま。この間にSMBがハングすると
+  そのワーカーは `stop_all` に即座には応答できない。ただし新規更新も止まるため
+  `status.py` が60秒で `stale` 表示し、`requeue_failed.py --stale-running-sec` の
+  孤児回収で拾える。管理画面(`admin_panel.py`)のFlask開発サーバ自体も同様に対象外
+  ([admin_panel.md](admin_panel.md#既知の限界))
