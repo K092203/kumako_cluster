@@ -1,0 +1,4 @@
+{
+  "setup_command": "c++ -O2 -std=c++17 -fopenmp -DSC26_DEBUG -o solve sc26team.cpp",
+  "timeout_sec": 300
+}
