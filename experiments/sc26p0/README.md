@@ -54,7 +54,33 @@ parser を直したら `stderr.txt` から何度でも再生成できる。
 | **`binary_hash`** | **実際に走った solver バイナリの sha256** |
 | `checker_hash` | 判定に使った checker バイナリの sha256 |
 
+`binary_hash` / `checker_hash` / `cand` / `ens` / `dcost` は **`#RUNMETA` 行**、つまり
+実際に走ったコマンド自身の出力から取る。⚠️ `worker.py` の `result.json` は job の
+`seed` を書かないので、**`#RUNMETA` が無いと「どの候補だったか」を復元できない**。
+投入時の params と食い違えば `meta_mismatch` に残る。
+
+整合性検査は `analyze_p0.py` に統合してある(独立した `integrity.py` は作っていない)。
+
 ---
+
+## 必要なもの
+
+`bash` / `c++`(OpenMP対応) / `python3`(標準ライブラリのみ) / `coreutils`(`sha256sum` など)。
+外部ライブラリは無い。
+
+### 取得方法
+
+```bash
+git clone -b sc26-p0-swap-research https://github.com/K092203/kumako_cluster.git
+```
+
+GitHub の **Download ZIP でも動く**(`.git` が無くても `gen_configs.py` は落ちない)。
+その場合 `git_commit` は `none(zip)` になり、実験の同一性は **`repo_snapshot_hash` と
+`binary_hash`** が担保する。⚠️ どちらも実際の中身から計算するので、git より確実。
+
+```bash
+bash experiments/sc26p0/bootstrap.sh    # ビルド + 1本流して測定器の生存確認
+```
 
 ## 使い方
 
@@ -88,6 +114,21 @@ experiments/sc26p0/gen_configs.py --root "$ROOT" --phase 0     # 27 ジョブ
 - [ ] `actual_sw_acc` が `DCOST` に反応する
 - [ ] `censored=0` で `Lc` が取れている
 - [ ] `requested_nswap` と `actual_sw_acc` が別項目で残る
+- [ ] `cand` が全レコードで埋まっている(`#RUNMETA` 由来)
+- [ ] `binary_hash` が全レコードで一致している
+- [ ] `meta_mismatch` が空(投入時の params と実行時の値が一致)
+
+⚠️ **Phase 0 で `rho` を見ない。** 3 候補では `rho=+1.000` が偶然でも 1/6 で出る。
+解析器は 1群 8 候補・4 群を満たすまで `insufficient` を返す。
+
+あわせて壊し方の確認をする(1回ずつでよい)。
+
+- [ ] worker を 1 台だけで動かす
+- [ ] worker を複数台で動かして二重取得が起きない
+- [ ] **running のまま止めて `requeue_failed.py` が拾い直す**
+- [ ] 壊れた job JSON を置いて worker が落ちない
+- [ ] 同じ job_id を二重投入して重複しない
+- [ ] snapshot を書き換えて `binary_hash` 不一致が検出される
 
 ### 4. Phase 1(処置量の校正)
 

@@ -74,15 +74,18 @@ def parse_run(result_dir):
     }
     p = r.get("params") or {}
     for k in ("ens", "cand", "sel", "dcost", "nswap", "budget", "probe_sweeps",
-              "phase", "experiment_id", "git_commit", "binary_hash",
+              "phase", "experiment_id", "git_commit", "binary_hash", "omp_threads",
               "repo_snapshot_hash", "checker_hash", "checker_version"):
         rec[k] = p.get(k)
     rec["requested_nswap"] = p.get("nswap")
 
     # ---- 診断行 ----
     meta = {}
+    run = {}
     for line in text.splitlines():
-        if line.startswith("#DIAGMETA"):
+        if line.startswith("#RUNMETA"):
+            run = parse_kv(line)
+        elif line.startswith("#DIAGMETA"):
             meta = parse_kv(line)
         elif line.startswith("#DIAG "):
             d = parse_kv(line)
@@ -123,9 +126,31 @@ def parse_run(result_dir):
             rec["reject"] = num(d.get("reject"), int)
     rec["diag_schema"] = num(meta.get("schema"), int)
 
+    # ---- RUNMETA を権威ある値として採用する ----
+    # ⚠️ worker.py の result.json は job の seed を書かないので、cand は params にも
+    #    result.json にも存在しない。実際に走ったコマンドの出力だけが真値。
+    rec["runmeta_version"] = num(run.get("version"), int)
+    if run.get("binary_hash"):
+        rec["binary_hash"] = run["binary_hash"]
+    if run.get("checker_hash") and run["checker_hash"] != "none":
+        rec["checker_hash"] = run["checker_hash"]
+    rec["omp_threads"] = num(run.get("omp"), int)
+
+    mismatch = []
+    for k, cast in (("ens", int), ("cand", int), ("dcost", float), ("budget", float)):
+        v = num(run.get(k), cast)
+        if v is None:
+            continue
+        declared = rec.get(k)
+        if declared is not None and float(declared) != float(v):
+            mismatch.append(f"{k}: params={declared} runmeta={v}")
+        rec[k] = v            # 実行時の値を採る
+    rec["meta_mismatch"] = "; ".join(mismatch)
+
     rec["config_hash"] = config_hash({
         k: rec.get(k) for k in
-        ("ens", "cand", "sel", "dcost", "nswap", "budget", "probe_sweeps", "phase")
+        ("ens", "cand", "sel", "dcost", "nswap", "budget", "probe_sweeps",
+         "phase", "experiment_id")
     })
     return rec
 

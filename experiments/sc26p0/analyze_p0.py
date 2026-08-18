@@ -65,13 +65,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--records", required=True)
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument("--experiment-id", default=None,
+                    help="この experiment_id だけを解析する (指定しなければ全件を群ごとに分けて出す)")
     ap.add_argument("--checkpoint", default="3000")
     args = ap.parse_args()
 
     recs = [json.loads(l) for l in Path(args.records).read_text().splitlines() if l.strip()]
+    n_all = len(recs)
+    if args.experiment_id:
+        recs = [r for r in recs if r.get("experiment_id") == args.experiment_id]
     out = Path(args.out_dir) if args.out_dir else Path(args.records).parent
-    report = {"n_records": len(recs), "integrity": {}, "groups": []}
-    lines = [f"# SC26 P0 解析\n", f"レコード数: {len(recs)}\n"]
+    report = {"n_records": len(recs), "n_all_records": n_all,
+              "experiment_id_filter": args.experiment_id, "integrity": {}, "groups": []}
+    lines = [f"# SC26 P0 解析\n", f"レコード数: {len(recs)} / 全 {n_all}\n"]
+    if args.experiment_id:
+        lines.append(f"対象 experiment_id: `{args.experiment_id}`\n")
 
     # ---------- 整合性検査 ----------
     problems = []
@@ -99,15 +107,19 @@ def main():
     # ---------- 群ごと ----------
     groups = defaultdict(list)
     for r in ok:
-        groups[(r.get("ens"), r.get("dcost"))].append(r)
+        # ⚠️ 同じ root に Phase 0→1→2 を貯めるので、experiment_id と phase を
+        #    跨いで同じ Spearman に混ぜてはいけない (条件も budget も違う)。
+        groups[(r.get("experiment_id"), r.get("phase"),
+                r.get("ens"), r.get("dcost"))].append(r)
 
     ck = args.checkpoint
     lines.append(f"\n## 群ごとの結果 (checkpoint S={ck})\n")
-    lines.append("| ens | DCOST | n | fp種類 | sw_acc中央 | sw_touched中央 | Lc種類 | censored | rho |\n")
-    lines.append("|---|---|---|---|---|---|---|---|---|\n")
+    lines.append("| experiment_id | phase | ens | DCOST | n | fp種類 | sw_acc中央 | "
+                 "sw_touched中央 | Lc種類 | censored | rho |\n")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|\n")
 
-    for key in sorted(groups, key=lambda k: (k[0] or 0, k[1] or 0)):
-        e, dc = key
+    for key in sorted(groups, key=lambda k: (str(k[0]), k[1] or 0, k[2] or 0, k[3] or 0)):
+        exp, ph, e, dc = key
         g = groups[key]
         fps = {r.get("fp") for r in g if r.get("fp")}
         accs = [r.get("actual_sw_acc") for r in g if r.get("actual_sw_acc") is not None]
@@ -125,14 +137,14 @@ def main():
         # 候補が分岐していない群は診断失敗として除外する
         diag_fail = (len(fps) <= 1 and len(g) > 1) or (len(set(lcs)) <= 1 and len(lcs) > 1)
 
-        lines.append(f"| {e} | {dc} | {len(g)} | {len(fps)} | "
+        lines.append(f"| {exp} | {ph} | {e} | {dc} | {len(g)} | {len(fps)} | "
                      f"{statistics.median(accs) if accs else '-'} | "
                      f"{statistics.median(tou) if tou else '-'} | "
                      f"{len(set(lcs))} | {cens} | "
                      f"{'診断失敗' if diag_fail else (f'{rho:+.3f}' if rho is not None else '-')} |\n")
 
         report["groups"].append({
-            "ens": e, "dcost": dc, "n": len(g),
+            "experiment_id": exp, "phase": ph, "ens": e, "dcost": dc, "n": len(g),
             "fp_unique": len(fps), "lc_unique": len(set(lcs)),
             "sw_acc_median": statistics.median(accs) if accs else None,
             "sw_touched_median": statistics.median(tou) if tou else None,
@@ -142,12 +154,26 @@ def main():
         })
 
     # ---------- P0 の総括 ----------
-    rhos = [g["rho"] for g in report["groups"]
-            if g["rho"] is not None and not g["diagnostic_failure"]]
+    # ⚠️ 標本が小さいまま判定を出さない。Phase 0 の smoke は 3 候補しかないので、
+    #    そのまま計算すると rho=+1.000 が簡単に出て「結論」に見えてしまう。
+    MIN_N_PER_GROUP = 8      # 1 群あたり必要な候補数
+    MIN_GROUPS      = 4      # 判定に必要な群 (問題×条件) の数
+    usable = [g for g in report["groups"]
+              if g["rho"] is not None and not g["diagnostic_failure"]
+              and g["n_used_for_rho"] >= MIN_N_PER_GROUP]
+    rhos = [g["rho"] for g in usable]
     lines.append("\n## P0 総括\n")
-    if not rhos:
-        lines.append("⚠️ **相関を評価できる群がない。** 候補が分岐していないか、"
-                     "Lc の分解能が足りない。判定を出してはいけない。\n")
+    n_small = sum(1 for g in report["groups"]
+                  if g["rho"] is not None and not g["diagnostic_failure"]
+                  and g["n_used_for_rho"] < MIN_N_PER_GROUP)
+    if not rhos or len(rhos) < MIN_GROUPS:
+        lines.append(f"⚠️ **判定を出せる標本がない。** "
+                     f"条件: 1群 {MIN_N_PER_GROUP} 候補以上 かつ {MIN_GROUPS} 群以上。"
+                     f"満たした群 {len(rhos)}、候補数不足の群 {n_small}。\n")
+        if n_small:
+            lines.append("候補が少ない群の rho は表に出しているが、**結論に使ってはいけない**。"
+                         "3 候補なら rho=+1.000 は偶然でも 1/6 の確率で出る。\n")
+        lines.append("Phase 0 は測定器の動作確認であって、相関の評価ではない。\n")
         report["verdict"] = "insufficient"
     else:
         med = statistics.median(rhos)

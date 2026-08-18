@@ -37,6 +37,28 @@ def sha256_file(p):
     return h.hexdigest()[:16]
 
 
+def git_commit_or_none():
+    """git が無い / リポジトリでない (ZIP 展開) 場合は None。落とさない。"""
+    try:
+        r = subprocess.run(["git", "-C", str(KUMAKO), "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def snapshot_hash(snap):
+    """snapshot の中身そのものから決まる ID。git に依存しない。
+    ⚠️ ビルド生成物と実行時の出力は除く (worker ごとに変わるため)。"""
+    skip = {"solve", "check_revised"}
+    parts = []
+    for f in sorted(snap.iterdir()):
+        if not f.is_file() or f.name in skip or f.name.startswith("coord_"):
+            continue
+        parts.append(f"{f.name}:{sha256_file(f)}")
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
@@ -66,9 +88,11 @@ def main():
 
     snap = Path(args.root) / "repo_snapshot"
     meta = {
-        "git_commit": subprocess.run(["git", "-C", str(KUMAKO), "rev-parse", "--short", "HEAD"],
-                                     capture_output=True, text=True).stdout.strip(),
-        "repo_snapshot_hash": sha256_file(snap / "sc26team.cpp"),
+        # ⚠️ GitHub の Download ZIP には .git が無い。git が無くても実験は動くべきなので、
+        #    取得できなければ内容ハッシュで代用する。実験の同一性は git commit ではなく
+        #    repo_snapshot_hash / binary_hash が担保する。
+        "git_commit": git_commit_or_none() or "none(zip)",
+        "repo_snapshot_hash": snapshot_hash(snap),
         "checker_version": "revised-0818",
         "experiment_id": f"p{args.phase}_{time.strftime('%Y%m%d-%H%M%S')}",
     }
