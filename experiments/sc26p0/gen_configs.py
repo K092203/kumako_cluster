@@ -94,6 +94,14 @@ def main():
         budget = args.budget or 360
 
     snap = Path(args.root) / "repo_snapshot"
+    # ⚠️ ディレクトリの有無だけ見ると、worker が作った空の repo_snapshot でも
+    #    全ジョブを生成してしまい、bash ./run_one.sh が exit 127 で全部 failed になる。
+    need = ["run_one.sh", "sc26team.cpp", "sc26.h", "cluster_setup.json"]
+    if snap.is_dir():
+        miss = [f for f in need if not (snap / f).exists()]
+        miss += [f"input_{e}.txt" for e in ens_list if not (snap / f"input_{e}.txt").exists()]
+        if miss:
+            sys.exit(f"repo_snapshot が不完全: {snap}\n  足りない: {', '.join(miss)}")
     if not snap.is_dir():
         sys.exit(f"repo_snapshot が無い: {snap}\n"
                  f"  mkdir -p {snap} && cp experiments/sc26p0/repo_snapshot/* {snap}/\n"

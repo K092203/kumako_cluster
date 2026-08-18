@@ -65,8 +65,11 @@ parser を直したら `stderr.txt` から何度でも再生成できる。
 
 ## 必要なもの
 
-`bash` / `c++`(OpenMP対応) / `python3`(標準ライブラリのみ) / `coreutils`(`sha256sum` など)。
+`bash` / `c++`(OpenMP対応) / `g++` / **`python3` 3.9 以上** / `coreutils`(`sha256sum` など)。
 外部ライブラリは無い。
+
+⚠️ **Python 3.8 以下では worker が 1 台も起動しない**(`scripts/_pyversion.py` が終了させる)。
+`python3 -V` を先に確認すること。
 
 ### 取得方法
 
@@ -97,14 +100,28 @@ cp "$ROOT/experiments/sc26p0/repo_snapshot/"* "$ROOT/repo_snapshot/"
 rm -f "$ROOT/repo_snapshot/solve" "$ROOT/repo_snapshot/check_revised"
 ```
 
-⚠️ ビルドは `cluster_setup.json` が **1 回だけ**行う。A/B は runtime toggle のみ。
+⚠️ ビルドは `cluster_setup.json` が行う。**「クラスタ全体で1回」ではなく、
+`--local-base` 配下のスロットごとの複製ごとに1回**走る(1PC 14スロットなら 14 並列ビルド)。
+A/B は runtime toggle のみで、ソースは全スロット同一。
+
+⚠️ solver のビルド失敗は setup 失敗(=そのスロットの全ジョブが failed)。
+checker のビルド失敗は**致命的にしない**(`checker_hash=none` になるだけ)。
 
 ### 2. worker 起動
 
 ```bash
+cd "$ROOT"                       # ⚠️ 以降は必ず $ROOT で実行する
 python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base /var/tmp/kumako-worker
 python3 scripts/status.py --root "$ROOT"
 ```
+
+⚠️ スクリプトのパスは cwd 基準。`$ROOT` 以外から叩くと `can't open file` で起動しない。
+
+⚠️ `--local-base` は**各PCのローカルディスク**。ここに snapshot が複製され、
+ビルドと `./solve` の実行が起きる。作成不可・容量不足・noexec だと全滅する。
+
+⚠️ **`$ROOT` は全PCが同じ共有ツリーを指すこと**(絶対パス文字列が同一である必要はない)。
+別実体を指すとPCごとに別キューを見て、pending が減らないまま idle になる。
 
 ### ⚠️ budget は 1 スロット 1 スレッド前提
 
