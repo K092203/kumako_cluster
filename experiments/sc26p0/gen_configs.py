@@ -87,6 +87,10 @@ def main():
         budget = args.budget or 120
 
     snap = Path(args.root) / "repo_snapshot"
+    if not snap.is_dir():
+        sys.exit(f"repo_snapshot が無い: {snap}\n"
+                 f"  mkdir -p {snap} && cp experiments/sc26p0/repo_snapshot/* {snap}/\n"
+                 f"  (cluster root は全 worker から同じパスで見える場所であること)")
     meta = {
         # ⚠️ GitHub の Download ZIP には .git が無い。git が無くても実験は動くべきなので、
         #    取得できなければ内容ハッシュで代用する。実験の同一性は git commit ではなく
