@@ -183,6 +183,46 @@ python3 scripts/requeue_failed.py --root "$ROOT" --stale-running-sec 900
 
 ---
 
+## ⚠️ 未解決の設計欠陥 — warmup の wall-clock 依存
+
+**Phase 1 の大量投入前に必ず潰す。** 現状 `sc26team.cpp` の probe warmup は
+
+```cpp
+const double warm = PROBE_WARM * budget;
+while (sc26_elapsed_seconds() < warm && wdL >= JAM_DL) { ... relax(nL, warm) ... }
+```
+
+と **wall-clock で切っている**。候補は別マシン・別スロットで走るので、CPU の速さや
+その時の負荷で `bestL` が変わる。つまり**候補ごとに probe 開始状態が違う**。
+
+これは paired 実験の前提そのものを壊す。`E_probe` の候補間の差が「swap の効果」なのか
+「開始状態の差」なのか分離できない。⚠️ **同一 executable 原則を守っていても、
+開始状態が違えば比較にならない。**
+
+### 対策(優先順)
+
+**本命: ens ごとの共通 prepared state を作って全候補で再利用する。**
+
+1. warmup を **回数** で切る(`SC26_PSTEPS`)。wall-clock を排して決定的にする。
+2. 1台で ens ごとに 1 回だけ warmup し、状態を書き出す(`SC26_STATE_OUT`)。
+   座標は hexfloat で保存する。10進丸めだと往復でビットが落ちる。
+   ⚠️ swap は**座標のみ**を入れ替え `sig` は不変なので、状態は `(x, y, L)` で足りる。
+3. その状態を `repo_snapshot/prepared_e<ens>.txt` として全 worker へ配る。
+4. 各ジョブは warmup せず読み込む(`SC26_STATE_IN`)。読めなければ**黙って別状態で
+   走らずに落とす**。候補差は swap の RNG だけになり、budget も probe に全部使える。
+
+**最低限(本命が間に合わない場合でも必須):**
+
+probe 開始時の `bestL` / `phi` / `warm_steps` / 状態の指紋を診断行に出し、
+**`state_fp` が違う候補を同じ相関解析へ混ぜない**。解析の grouping キーへ加える。
+指紋は double のビット列から作る(値が 1 ビット違えば変わる)。
+
+### 現状
+
+`SC26_PSTEPS` / `SC26_STATE_IN` / `SC26_STATE_OUT` と `#PROBESTART` 行の実装は
+**書いたが未検証のため入れていない**。Phase 0 を現行の 240 秒設定で回している間に
+検証して入れる。⚠️ **検証できていない変更を投入経路へ混ぜない。**
+
 ## 停止条件(先に決めておく)
 
 | 条件 | 判断 |
