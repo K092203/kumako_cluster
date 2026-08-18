@@ -63,6 +63,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", required=True)
     ap.add_argument("--phase", type=int, required=True, choices=[0, 1, 2])
+    # ⚠️ budget は「1 スロット 1 スレッド」を前提にした既定値。
+    #    probe の深さは wall 時間ではなく計算量で決まる。実測(ens4, DCOST12):
+    #      1thread  25s → E=2.9e-10 (完全に解けている。probe に情報が無い)
+    #      1thread  60s → E=4.3e-05
+    #      1thread 120s → E=6.6e-03
+    #      1thread 240s → E=4.3e-02  = 4thread 60s と一致
+    #    スロットに複数スレッドを与えるなら、その分だけ budget を減らしてよい。
     ap.add_argument("--cands", type=int, default=None)
     ap.add_argument("--dcost", type=float, action="append", default=None)
     ap.add_argument("--ens", type=int, action="append", default=None)
@@ -74,17 +81,17 @@ def main():
         ens_list = args.ens or [1, 4, 8]
         cands = args.cands or 3
         dcosts = args.dcost or [4.0, 8.0, 12.0]
-        budget = args.budget or 60
+        budget = args.budget or 240
     elif args.phase == 1:
         ens_list = args.ens or list(range(1, 9))
         cands = args.cands or 8
         dcosts = args.dcost or [4.0, 8.0, 12.0, 16.0]
-        budget = args.budget or 90
+        budget = args.budget or 300
     else:
         ens_list = args.ens or list(range(1, 9))
         cands = args.cands or 32
         dcosts = args.dcost or [8.0]
-        budget = args.budget or 120
+        budget = args.budget or 360
 
     snap = Path(args.root) / "repo_snapshot"
     if not snap.is_dir():

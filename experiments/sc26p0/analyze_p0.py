@@ -105,6 +105,7 @@ def main():
     lines.append("問題なし\n" if not problems else "".join(f"- ⚠️ {p}\n" for p in problems))
 
     # ---------- 群ごと ----------
+    E_PROBE_FLOOR = 1e-6   # これ未満は probe が浅すぎて情報が無い
     groups = defaultdict(list)
     for r in ok:
         # ⚠️ 同じ root に Phase 0→1→2 を貯めるので、experiment_id と phase を
@@ -137,11 +138,20 @@ def main():
         # 候補が分岐していない群は診断失敗として除外する
         diag_fail = (len(fps) <= 1 and len(g) > 1) or (len(set(lcs)) <= 1 and len(lcs) > 1)
 
+        # ⚠️ probe が浅すぎる群も診断失敗。E がほぼ 0 = 完全に解けており、
+        #    候補間の差が数値誤差しか残っていない。budget 不足が典型的な原因。
+        #    実測: 1thread 25s で E=2.9e-10、240s で E=4.3e-02。
+        es = [r.get(f"E_{ck}") for r in g if r.get(f"E_{ck}") is not None]
+        e_med = statistics.median(es) if es else None
+        shallow = e_med is not None and e_med < E_PROBE_FLOOR
+        if shallow:
+            diag_fail = True
+
         lines.append(f"| {exp} | {ph} | {e} | {dc} | {len(g)} | {len(fps)} | "
                      f"{statistics.median(accs) if accs else '-'} | "
                      f"{statistics.median(tou) if tou else '-'} | "
                      f"{len(set(lcs))} | {cens} | "
-                     f"{'診断失敗' if diag_fail else (f'{rho:+.3f}' if rho is not None else '-')} |\n")
+                     f"{'probe浅い' if shallow else '診断失敗' if diag_fail else (f'{rho:+.3f}' if rho is not None else '-')} |\n")
 
         report["groups"].append({
             "experiment_id": exp, "phase": ph, "ens": e, "dcost": dc, "n": len(g),
@@ -149,6 +159,7 @@ def main():
             "sw_acc_median": statistics.median(accs) if accs else None,
             "sw_touched_median": statistics.median(tou) if tou else None,
             "censored": cens, "rho": rho, "rho_ci": [lo, hi],
+            "E_median": e_med, "probe_too_shallow": shallow,
             "diagnostic_failure": diag_fail,
             "n_used_for_rho": len(pairs),
         })

@@ -86,10 +86,15 @@ bash experiments/sc26p0/bootstrap.sh    # ビルド + 1本流して測定器の�
 
 ### 1. cluster root を用意
 
+⚠️ **cluster root にはリポジトリ本体を置く。** `supervise_slots.py` は
+`$ROOT/scripts/register_worker.py` を呼ぶので、`repo_snapshot` だけでは動かない。
+
 ```bash
 ROOT=<全workerから同じパスで見える共有>
+git clone -b sc26-p0-swap-research https://github.com/K092203/kumako_cluster.git "$ROOT"
 mkdir -p "$ROOT/repo_snapshot"
-cp experiments/sc26p0/repo_snapshot/* "$ROOT/repo_snapshot/"
+cp "$ROOT/experiments/sc26p0/repo_snapshot/"* "$ROOT/repo_snapshot/"
+rm -f "$ROOT/repo_snapshot/solve" "$ROOT/repo_snapshot/check_revised"
 ```
 
 ⚠️ ビルドは `cluster_setup.json` が **1 回だけ**行う。A/B は runtime toggle のみ。
@@ -100,6 +105,27 @@ cp experiments/sc26p0/repo_snapshot/* "$ROOT/repo_snapshot/"
 python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base /var/tmp/kumako-worker
 python3 scripts/status.py --root "$ROOT"
 ```
+
+### ⚠️ budget は 1 スロット 1 スレッド前提
+
+probe の深さは wall 時間ではなく**計算量**で決まる。1PC=14スロットなら 1 スレッドなので、
+既定値はそれに合わせてある。実測 (ens4, DCOST12):
+
+| OMP | budget | E_probe | Lc |
+|---|---|---|---|
+| 1 | 25s | 2.9e-10 | 55.83 |
+| 1 | 60s | 4.3e-05 | 54.51 |
+| 1 | 120s | 6.6e-03 | 53.93 |
+| **1** | **240s** | **4.3e-02** | **53.66** |
+| 4 | 60s | 4.3e-02 | 53.66 |
+
+**1thread 240s = 4thread 60s**(E が有効数字まで一致)。
+⚠️ 短い budget では probe が完全に解けてしまい `E≈1e-9` になる。候補間の差が
+数値誤差しか残らず、実験そのものが無意味になる。解析器は E の中央値が `1e-6` 未満の
+群を `probe浅い` として自動的に弾く。
+
+既定は Phase 0 = 240s / Phase 1 = 300s / Phase 2 = 360s。
+スロットに複数スレッドを与えるなら、その分だけ減らしてよい。
 
 ### 3. Phase 0(smoke。必ず先に)
 
