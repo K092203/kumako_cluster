@@ -18,3 +18,10 @@ tools/*
 
 # 実験ログ(証跡はresults_*.jsonとvalidate_*.pyに残す。生ログは追跡しない)
 experiments/*.log
+
+# 実験用 snapshot は「Zip で配る材料」なので追跡する (上の repo_snapshot/ の例外)。
+# ただしビルド生成物と実行時の出力は追跡しない。
+!experiments/sc26p0/repo_snapshot/
+experiments/sc26p0/repo_snapshot/solve
+experiments/sc26p0/repo_snapshot/check_revised
+experiments/sc26p0/repo_snapshot/coord_*.txt
