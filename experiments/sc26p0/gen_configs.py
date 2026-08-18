@@ -96,7 +96,7 @@ def main():
     snap = Path(args.root) / "repo_snapshot"
     # ⚠️ ディレクトリの有無だけ見ると、worker が作った空の repo_snapshot でも
     #    全ジョブを生成してしまい、bash ./run_one.sh が exit 127 で全部 failed になる。
-    need = ["run_one.sh", "sc26team.cpp", "sc26.h", "cluster_setup.json"]
+    need = ["run_one.py", "setup_build.py", "sc26team.cpp", "sc26.h", "cluster_setup.json"]
     if snap.is_dir():
         miss = [f for f in need if not (snap / f).exists()]
         miss += [f"input_{e}.txt" for e in ens_list if not (snap / f"input_{e}.txt").exists()]
@@ -135,7 +135,7 @@ def main():
                    "--param", f"repo_snapshot_hash={meta['repo_snapshot_hash']}",
                    "--param", f"checker_version={meta['checker_version']}",
                    "--",
-                   "bash", "./run_one.sh", str(e), "__seed__", str(dc), str(budget)]
+                   "python", "run_one.py", str(e), "__seed__", str(dc), str(budget)]
             if args.dry_run:
                 print(" ".join(cmd))
             else:

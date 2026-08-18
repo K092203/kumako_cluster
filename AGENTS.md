@@ -76,10 +76,10 @@ while (sc26_elapsed_seconds() < warm ...) { ... relax(nL, warm) ... }
 # $ROOT = 全PCが同じ共有ツリーを指す場所。リポジトリ全体をここに置く
 cd "$ROOT"
 python3 -V                                    # ⚠️ 3.9 以上でなければ worker が起動しない
-bash experiments/sc26p0/bootstrap.sh          # ビルド + 1本流して測定器の生存確認
+python experiments/sc26p0/bootstrap.py        # ビルド + 2本流して測定器の生存確認
 
 python3 experiments/sc26p0/gen_configs.py --root "$ROOT" --phase 0
-python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base /var/tmp/kumako-worker
+python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base C:\\supercon-worker
 python3 scripts/status.py --root "$ROOT"
 
 python3 experiments/sc26p0/collect.py    --root "$ROOT"
@@ -105,7 +105,8 @@ python3 experiments/sc26p0/analyze_p0.py --records "$ROOT/sc26p0_out/records.jso
 
 | 症状 | 見るところ |
 |---|---|
-| worker が起動しない | `python3 -V` が 3.9 未満 / `$ROOT` にリポジトリ全体が無い / `$ROOT` 以外の cwd から実行した |
+| setup が全滅 | `$ROOT/tools/w64devkit` が無い(**gitignore なので clone には入らない**) |
+| worker が起動しない | `python -V` が 3.9 未満 / `$ROOT` にリポジトリ全体が無い / `$ROOT` 以外の cwd から実行した |
 | pending が減らない | 各PCの `$ROOT` が同じ共有実体か / 共有先に作成・rename 権限があるか |
 | 全ジョブ failed | `logs/` と `--local-base` の `setup.log`。`repo_snapshot` が空 / `c++` に OpenMP が無い / local-base が noexec |
 | `#RUNERR missing=` | snapshot に入力か `solve` が無い。**壊れた数字を records に入れないための正しい停止** |

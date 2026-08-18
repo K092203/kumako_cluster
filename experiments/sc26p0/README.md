@@ -65,8 +65,20 @@ parser を直したら `stderr.txt` から何度でも再生成できる。
 
 ## 必要なもの
 
-`bash` / `c++`(OpenMP対応) / `g++` / **`python3` 3.9 以上** / `coreutils`(`sha256sum` など)。
-外部ライブラリは無い。
+**Windows 本番前提。** 必要なのは **`python` 3.9 以上** と **C++ コンパイラ**だけ。
+外部ライブラリは無い。⚠️ `bash` も `sha256sum` も使わない(実行系は Python)。
+
+コンパイラは `setup_build.py` が次の順で探す。
+
+1. `%SUPERCON_ROOT%\tools\w64devkit\bin\g++.exe` — **クラスタ標準**
+2. PATH 上の `g++` / `c++`
+
+⚠️ **`tools/w64devkit` は `.gitignore` されており GitHub の clone/ZIP には入らない。**
+既存のクラスタ配備から `$ROOT/tools/w64devkit` へコピーすること。これが無いと
+全スロットで setup が失敗し、**全ジョブが failed** になる。
+
+⚠️ `-fopenmp` が通らなければ自動的に外して続行する。worker は
+`OMP_NUM_THREADS=1` を強制する(1スレッド原則)ので結果は変わらない。
 
 ⚠️ **Python 3.8 以下では worker が 1 台も起動しない**(`scripts/_pyversion.py` が終了させる)。
 `python3 -V` を先に確認すること。
@@ -82,7 +94,7 @@ GitHub の **Download ZIP でも動く**(`.git` が無くても `gen_configs.py`
 `binary_hash`** が担保する。⚠️ どちらも実際の中身から計算するので、git より確実。
 
 ```bash
-bash experiments/sc26p0/bootstrap.sh    # ビルド + 1本流して測定器の生存確認
+python experiments/sc26p0/bootstrap.py   # ビルド + 2本流して測定器の生存確認
 ```
 
 ## 使い方
@@ -97,7 +109,7 @@ ROOT=<全workerから同じパスで見える共有>
 git clone -b sc26-p0-swap-research https://github.com/K092203/kumako_cluster.git "$ROOT"
 mkdir -p "$ROOT/repo_snapshot"
 cp "$ROOT/experiments/sc26p0/repo_snapshot/"* "$ROOT/repo_snapshot/"
-rm -f "$ROOT/repo_snapshot/solve" "$ROOT/repo_snapshot/check_revised"
+# ⚠️ ビルド生成物 (solve/check_revised) は配らない。各スロットでビルドされる
 ```
 
 ⚠️ ビルドは `cluster_setup.json` が行う。**「クラスタ全体で1回」ではなく、
@@ -111,7 +123,7 @@ checker のビルド失敗は**致命的にしない**(`checker_hash=none` に�
 
 ```bash
 cd "$ROOT"                       # ⚠️ 以降は必ず $ROOT で実行する
-python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base /var/tmp/kumako-worker
+python3 scripts/supervise_slots.py --root "$ROOT" --slots 14 --local-base C:\\supercon-worker
 python3 scripts/status.py --root "$ROOT"
 ```
 
